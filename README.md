@@ -102,12 +102,6 @@ curl -s -X POST -H "Content-Type: application/json" -d '{"prompt": "Your prompt 
 Generate chat completions using loaded LLM model. Supporting parameters are almost same as ``v1/completions`` but the user sends a ``messages`` List. This server automatically tries to apply chat-templates based on model's information. 
 
 ```console
-$ curl -X POST -H "Content-Type: application/json" -d '{"prompt": "Your prompt here", "max_tokens": 50}' http://localhost:4000/v1/completions
-
-{"id":"d0ae05ea-c507-4397-ad83-14d26e208a69","object":"text_completion","created":1712068570,"model":"gemma-2b","choices":[{"text":" has led me to a number of things that I never suspected before. For example:\n\nMy understanding is that the <code>.git/HEAD</code> file, among other things, contains a SHA. However, that SHA is also the <code>commit"}],"usage":{"prompt_tokens":4,"completion_tokens":50,"total_tokens":54}}
-```
-
-```console
 curl -s -X POST -H "Content-Type: application/json" -H "X-Model-Id: 0" -d '{"messages": [{"role": "user", "content": "hello"}]}' http://localhost:4000/v1/chat/completions | jq 
 {
   "id": "f84da751-9a03-466e-aa4d-b40eaf5f7613",
