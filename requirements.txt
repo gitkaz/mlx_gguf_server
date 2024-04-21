@@ -1,0 +1,11 @@
+fastapi
+apscheduler
+sse_starlette
+pydantic
+mlx
+mlx_lm
+uvicorn
+torch
+sentencepiece
+psutil
+llama-cpp-python
