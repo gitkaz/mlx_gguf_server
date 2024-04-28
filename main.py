@@ -176,7 +176,7 @@ def create_llm_process(model_id: str) -> LLMProcess:
 
 @app.get("/management/processes")
 async def get_management_processes():
-    processes_info = []
+    processes_info = {}
     for model_id, llm_process in app.state.llm_processes.items():
         process_info = {
             "model_id": model_id,
@@ -189,7 +189,7 @@ async def get_management_processes():
             "memory_usage": llm_process.get_memory_usage(),
             "current_queue": llm_process.get_queues_info()
         }
-        processes_info.append(process_info)
+        processes_info[model_id] = process_info
     return {"processes": processes_info}
 
 @app.post("/management/process/clean-up")
