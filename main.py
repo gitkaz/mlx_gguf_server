@@ -297,8 +297,8 @@ async def post_audio_transcribe(
 
     if not app.state.enable_whisper:
         raise HTTPException(status_code=400, detail="Whisper transcription is not enabled")
-    if not file.filename.lower().endswith(('.wav', '.mp3', '.m4a')):
-        raise HTTPException(status_code=400, detail="Only WAV, MP3 or M4A files are allowed")
+    if not file.filename.lower().endswith(('.wav', '.mp3', '.m4a', 'webm')):
+        raise HTTPException(status_code=400, detail="Only WAV, MP3, M4A or WEBM files are allowed")
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     file_extension = os.path.splitext(file.filename)[1]
@@ -316,7 +316,7 @@ async def post_audio_transcribe(
     if "error" in result:
         raise HTTPException(status_code=500, detail=result["error"])
 
-    return JSONResponse(content={"filename": new_filename, "transcript": result["text"]}, status_code=200)
+    return JSONResponse(content={"filename": new_filename, "text": result["text"]}, status_code=200)
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description='FastAPI server arguments')
