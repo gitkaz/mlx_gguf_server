@@ -1,21 +1,24 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, Header, HTTPException, Request, UploadFile, File, Form, Depends
+from fastapi.responses import StreamingResponse, JSONResponse
+from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 
 import argparse
 import asyncio
 import json
+import os
 import time
 import psutil
 import uuid
 import uvicorn
-from typing import Union
+from typing import Union, Optional
 from multiprocessing import Process, Queue, Manager
 
 from llm_process.llm_process import start_llm_process
 from schemas import CompletionParams, TokenCountParams, ModelLoadParams, ProcessCleanParams
 from utils.utils import create_model_list
+from whisper_stt.whisper import AudioTranscriber
 from logging import getLogger
 
 logger = getLogger("uvicorn")
@@ -246,6 +249,7 @@ async def get_v1_internal_model_info(model_id: str = Header(default="0", alias="
 
 @app.get("/v1/internal/model/list")
 def get_v1_internal_model_list():
+    app.state.models = create_model_list()
     model_names = list(app.state.models.keys())
     model_names = sorted(model_names)
     return {"model_names": model_names}
@@ -285,16 +289,55 @@ def post_model_load(params: ModelLoadParams, model_id: str = Header(default="0",
         raise HTTPException(status_code=status_code, detail=response)
     
 
+@app.post("/v1/audio/transcriptions")
+async def post_audio_transcribe(
+    file: UploadFile = File(...),
+    language: Optional[str] = Form(None)
+):
+
+    if not app.state.enable_whisper:
+        raise HTTPException(status_code=400, detail="Whisper transcription is not enabled")
+    if not file.filename.lower().endswith(('.wav', '.mp3', '.m4a')):
+        raise HTTPException(status_code=400, detail="Only WAV, MP3 or M4A files are allowed")
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    file_extension = os.path.splitext(file.filename)[1]
+    new_filename = f"audio_{timestamp}{file_extension}"
+    file_path = os.path.join("whisper_stt/uploads", new_filename)
+        
+    content = await file.read()
+    with open(file_path, "wb") as f:
+        f.write(content)
+
+    transcriber = AudioTranscriber(model_path=app.state.whisper_model, file_path=file_path)
+    result = transcriber.transcribe(language=language)
+    transcriber.delete_file()
+
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
+
+    return JSONResponse(content={"filename": new_filename, "transcript": result["text"]}, status_code=200)
+
 def parse_arguments():
     parser = argparse.ArgumentParser(description='FastAPI server arguments')
-    parser.add_argument('-a', '--addr',  type=str, default='127.0.0.1', help='ip addr to listen (default: 127.0.0.1)')
-    parser.add_argument('-p', '--port',  type=int, default=4000, help='port number to listen (default: 4000)')
+    parser.add_argument('-a', '--addr', type=str, default='127.0.0.1', help='ip addr to listen (default: 127.0.0.1)')
+    parser.add_argument('-p', '--port', type=int, default=4000, help='port number to listen (default: 4000)')
     parser.add_argument('--log-level', choices=['debug', 'info', 'warning', 'error', 'critical'], default='info', help='Log level')
+    parser.add_argument('--enable-whisper', action='store_true', help='Enable Whisper transcription')
+    parser.add_argument('--whisper-model', type=str, help='HuggingFace path or local filepath to Whisper model')
     args = parser.parse_args()
     return args
 
-
 if __name__ == "__main__":
     args = parse_arguments()
+
+    if args.enable_whisper and args.whisper_model:
+        app.state.enable_whisper = True
+        app.state.whisper_model = args.whisper_model
+    elif args.enable_whisper or args.whisper_model:
+        print("Error: Both --enable-whisper and --whisper-model must be provided to enable Whisper transcription")
+        exit(1)
+    else:
+        app.state.enable_whisper = False
 
     uvicorn.run(app, host=args.addr, port=args.port, access_log=True, log_level=args.log_level)
