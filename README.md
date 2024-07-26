@@ -9,6 +9,7 @@
   - [API Requests and Responses](#api-requests-and-responses)
   - [Loading and Accessing Multiple Models](#loading-and-accessing-multiple-models)
   - [Process Management](#process-management)
+  - [Transcribe feature](#transcribe-feature)
 - [Unsupported/Future improvements](#unsupported/future-improvements)
 
 
@@ -142,6 +143,25 @@ $ curl -X POST http://localhost:4000/v1/internal/model/unload
 
 {"unload":"success"}%
 ```
+
+`/v1/audio/transcriptions`
+
+This endpoint accepts audio files (WAV, MP3, M4A, or WebM formats) and returns the transcribed text.
+
+#### Request:
+- Method: POST
+- Body:
+  - `file`: The audio file to transcribe (required)
+  - `language`: The language of the audio (optional, auto-detected if not specified)
+
+#### Response:
+```json
+{
+  "filename": "audio_20240327_123456.wav",
+  "text": "Transcribed text goes here."
+}
+```
+
 
 ## Loading and Accessing Multiple Models
 You can load and access multiple models simultaneously by using `X-Model-Id"` header.
@@ -322,7 +342,24 @@ curl -X POST -H "Content-Type: application/json" -H "X-Model-Id: 1" -d '{"timeou
 
 {"process_clean_up":"success"}
 ```
+# Transcribe Feature
+An audio transcription feature powered by the [`mlx_exaples/whisper`](https://github.com/ml-explore/mlx-examples/tree/main/whisper), allowing you to transcribe audio files using Whisper models.
 
+## Additinal instration for this feature
+You need to instarll `ffmpeg`. Please read the [`mlx_exaples/whisper`](https://github.com/ml-explore/mlx-examples/tree/main/whisper) page.
+
+## Enabling Transcription
+To enable the transcription feature, you need to add two arguments when running the program:
+
+```
+python main.py --enable-whisper --whisper-model <model_path_or_name>
+```
+
+- `--enable-whisper`: This flag enables the Whisper transcription feature.
+- `--whisper-model`: Specifies the Whisper model to use. Model must converted for mlx. You can find pre-converted models at [Hugging Face - mlx-community's Collections- Whisper](https://huggingface.co/collections/mlx-community/whisper-663256f9964fbb1177db93dc)
+You can speficy following both cases.
+  - A HuggingFace model name (e.g., "mlx-community/whisper-large-v3-mlx")
+  - A local directory path containing the model files
 
 # Unsupported/Future improvements
 
