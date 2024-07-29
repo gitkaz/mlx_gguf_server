@@ -16,7 +16,7 @@ from typing import Union, Optional
 from multiprocessing import Process, Queue, Manager
 
 from llm_process.llm_process import start_llm_process
-from schemas import CompletionParams, TokenCountParams, ModelLoadParams, ProcessCleanParams
+from schemas import CompletionParams, TokenCountParams, ModelLoadParams, ProcessCleanParams, CacheLimitParams
 from utils.utils import create_model_list
 from whisper_stt.whisper import AudioTranscriber
 from logging import getLogger
@@ -69,7 +69,7 @@ class LLMProcess:
         if self.process.is_alive():
             self.process.terminate()
 
-    async def task_request_streaming(self, task: str, params: Union[CompletionParams, TokenCountParams, ModelLoadParams]):
+    async def task_request_streaming(self, task: str, params: Union[CompletionParams, TokenCountParams, ModelLoadParams, CacheLimitParams]):
         request_id = await self.add_request_to_queue(task, params)
         while True:
             try:
@@ -109,7 +109,7 @@ class LLMProcess:
                 self.push_back_result(response_id, response_message_json)
 
 
-    async def add_request_to_queue(self, task: str, params: Union[CompletionParams, TokenCountParams, ModelLoadParams]) -> str:
+    async def add_request_to_queue(self, task: str, params: Union[CompletionParams, TokenCountParams, ModelLoadParams, CacheLimitParams]) -> str:
         request_id = str(uuid.uuid4())
         current_time = time.time()
         await asyncio.get_event_loop().run_in_executor(None, self.request_queue.put, (task, request_id, params))
@@ -246,6 +246,34 @@ async def get_v1_internal_model_info(model_id: str = Header(default="0", alias="
     model_type = llm_process.model_info["model_type"]
     return {"model_name": model_name, "model_type": model_type}
  
+
+@app.get("/v1/internal/model/cache_memory")
+async def get_cache_memory(model_id: str = Header(default="0", alias="X-Model-Id")):
+    llm_process: LLMProcess = get_llm_process(model_id)
+
+    # create params variable (This is dummy. Just need for task_request arguemnt.)
+    params = CacheLimitParams
+
+    status_code, response = await llm_process.task_request('get_cache_memory', params=params)
+    if status_code == 200:
+        return {'cache_memory_size': response}
+    else: 
+        raise HTTPException(status_code=status_code, detail=response)
+
+@app.post("/v1/internal/model/cache_limit")
+async def post_cache_limit(params: CacheLimitParams, model_id: str = Header(default="0", alias="X-Model-Id")):
+    llm_process: LLMProcess = get_llm_process(model_id)
+
+    if params.cache_limit < 0:
+        raise HTTPException(status_code=400, detail=f"The cache limit size is below the lower limit.")
+
+    status_code, response = await llm_process.task_request('set_cache_liimt', params)
+    if status_code == 200:
+        return {'cache_limit': response}
+    else: 
+        raise HTTPException(status_code=status_code, detail=response)
+
+
 
 @app.get("/v1/internal/model/list")
 def get_v1_internal_model_list():

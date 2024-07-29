@@ -1,4 +1,5 @@
 import json
+import mlx.core as mx
 import mlx_lm
 import os
 import time
@@ -9,7 +10,7 @@ from typing import Generator, List
 from .mlx_generate_stream import generate_stream
 from .task_response import TaskResponse
 from .logger_config import setup_logger
-logger = setup_logger(__name__, level="INFO")
+logger = setup_logger(__name__, level="DEBUG")
 
 import gc
 
@@ -49,6 +50,7 @@ class LLMModel:
         self.model_path: str = ""        
         self.model_name: str = ""
         self.model_type: str = ""
+        self.model_cache_limit: int = 0
         self.model = None
         self.tokenizer = None
 
@@ -89,27 +91,56 @@ class LLMModel:
         logger.debug(f"{model_info=}")
         return TaskResponse.create(200, model_info)
 
+    def set_cache_liimt(self, params) -> TaskResponse:
+        limit = int(params.cache_limit)
+        try:
+            if limit >= 0:
+                logger.debug(f"set model cache limit {self.model_name=}, limit = {limit}")
+                previous_limit = mx.metal.set_cache_limit(limit)
+                self.model_cache_limit = limit
+                message = f"change cache limit from {previous_limit} to {self.model_cache_limit}"
+                logger.debug(message)
+            return TaskResponse(200, message)
+        except Exception as e:
+            return TaskResponse(500, e)
+
+    def get_cache_memory(self) -> TaskResponse:
+        try:
+            cach_memory_size = mx.metal.get_cache_memory()
+            logger.debug(f"{cach_memory_size=}")
+            return TaskResponse(200, f"{cach_memory_size=}")
+        except Exception as e:
+            return TaskResponse(500, e)
+        
+    def force_metal_clear_cache(self):
+        logger.debug(f"mx.metal.get_cache_memory()={mx.metal.get_cache_memory()}")
+        mx.metal.clear_cache()
+        logger.debug(f"mx.metal.get_cache_memory()={mx.metal.get_cache_memory()}")
+
     def get_max_position_embeddings(self, model_path):
         with open(f"{model_path}/config.json", "r") as f:
             config = json.load(f)
             return config.get("max_position_embeddings")
 
     def token_count(self, params) -> TaskResponse:
-        if self.model_type == 'mlx':
-            if params.messages != []:
-                tokenized_input = self.tokenizer.apply_chat_template(params.messages, tokenize=True, add_generation_prompt=True)
-            else:
-                tokenized_input = self.tokenizer.tokenize(params.prompt)
-        elif self.model_type == 'llama-cpp':
-            if params.messages != []:
-                text = json.dumps(params.messages)                
-            else:
-                text = params.prompt
-            text = bytes(text, 'utf-8')
-            tokenized_input= self.model.tokenize(text)
+        try:
+            if self.model_type == 'mlx':
+                if params.messages != []:
+                    tokenized_input = self.tokenizer.apply_chat_template(params.messages, tokenize=True, add_generation_prompt=True)
+                else:
+                    tokenized_input = self.tokenizer.tokenize(params.prompt)
+            elif self.model_type == 'llama-cpp':
+                if params.messages != []:
+                    text = json.dumps(params.messages)                
+                else:
+                    text = params.prompt
+                text = bytes(text, 'utf-8')
+                tokenized_input= self.model.tokenize(text)
 
-        token_length = len(tokenized_input)
-        return TaskResponse(200, token_length)
+            token_length = len(tokenized_input)
+            return TaskResponse(200, token_length)
+        except Exception as e:
+            return TaskResponse(500, e)
 
     def completions_stream(self, params) -> Generator[TaskResponse, None, None]:
         mlx_llama_generate = MLX_LLAMA_Generate(self.model, self.tokenizer, self.model_type, self.model_name)
@@ -130,6 +161,9 @@ class LLMModel:
         del mlx_llama_generate 
         gc.collect()
 
+        if self.model_cache_limit > 0 and mx.metal.get_cache_memory() > int(self.model_cache_limit):
+            self.force_metal_clear_cache()
+   
 
     def apply_chat_template(self, messages: List[dict]) -> str:
         chatml_instruct_template="{%- set ns = namespace(found=false) -%}{%- for message in messages -%}{%- if message['role'] == 'system' -%}{%- set ns.found = true -%}{%- endif -%}{%- endfor -%}{%- for message in messages %}{%- if message['role'] == 'system' -%}{{- '<|im_start|>system\n' + message['content'].rstrip() + '<|im_end|>\n' -}}{%- else -%}{%- if message['role'] == 'user' -%}{{-'<|im_start|>user\n' + message['content'].rstrip() + '<|im_end|>\n'-}}{%- else -%}{{-'<|im_start|>assistant\n' + message['content'] + '<|im_end|>\n' -}}{%- endif -%}{%- endif -%}{%- endfor -%}{%- if add_generation_prompt -%}{{-'<|im_start|>assistant\n'-}}{%- endif -%}"

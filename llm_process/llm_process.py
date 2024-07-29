@@ -22,6 +22,10 @@ async def start_llm_process(request_queue: Queue, response_queue: Queue):
             result = model.load_model(params)
         elif task == 'token-count':
             result = model.token_count(params)
+        elif task == 'get_cache_memory':
+            result = model.get_cache_memory()
+        elif task == 'set_cache_liimt':
+            result = model.set_cache_liimt(params)
         elif task == 'completions_stream':
             for result in model.completions_stream(params):
                 assert_task_response(result)

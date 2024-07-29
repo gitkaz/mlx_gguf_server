@@ -48,6 +48,9 @@ class TokenCountParams(BaseModel):
             raise ValueError("Only one of 'prompt' or 'messages' should be provided.")
         return self
 
+class CacheLimitParams(BaseModel):
+    model: str = "dummy"
+    cache_limit: int = 0
 
 
 class ModelLoadParams(BaseModel):

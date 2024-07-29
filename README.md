@@ -134,6 +134,31 @@ $ curl -X POST -H "Content-Type: application/json" -d '{"prompt": "Your prompt h
 {"length":3}
 ```
           
+`/v1/internal/model/cache_memory`
+
+Get the current cache memory usage of a loaded model. More detailed information at "https://ml-explore.github.io/mlx/build/html/python/_autosummary/mlx.core.metal.get_cache_memory.html"
+
+```console
+$ curl -X GET -H "X-Model-Id: 0" http://localhost:4000/v1/internal/model/cache_memory
+
+{"cache_memory": 1234567}
+```
+
+The response shows the current cache memory usage in bytes.
+
+`/v1/internal/model/cache_limit`
+
+Set a new cache memory limit for a loaded model. More detailed information at https://ml-explore.github.io/mlx/build/html/python/_autosummary/mlx.core.metal.set_cache_limit.html
+
+```console
+$ curl -X POST -H "Content-Type: application/json" -H "X-Model-Id: 0" -d '{"cache_limit": 2000000000}' http://localhost:4000/v1/internal/model/cache_limit
+
+{"cache_limit": 2000000000}
+```
+
+The cache_limit parameter specifies the new cache memory limit in bytes. The response confirms the newly set cache limit. If you set the limit to 0, it means there's no limit on cache memory usage.
+Note: Setting a cache limit below 0 will result in a 400 Bad Request error.
+
 `/v1/internal/model/unload`
 
 Unload model.
@@ -144,24 +169,28 @@ $ curl -X POST http://localhost:4000/v1/internal/model/unload
 {"unload":"success"}%
 ```
 
+
 `/v1/audio/transcriptions`
 
-This endpoint accepts audio files (WAV, MP3, M4A, or WebM formats) and returns the transcribed text.
+Transcribe an audio file to text.
 
-#### Request:
-- Method: POST
-- Body:
-  - `file`: The audio file to transcribe (required)
-  - `language`: The language of the audio (optional, auto-detected if not specified)
+```console
+$ curl -X POST -H "Content-Type: multipart/form-data" \
+     -F "language=en" \
+     -F "file=@/path/to/your/audio_file.wav" \
+     http://localhost:4000/v1/audio/transcriptions
 
-#### Response:
-```json
 {
-  "filename": "audio_20240327_123456.wav",
-  "text": "Transcribed text goes here."
+  "filename": "audio_file.wav",
+  "text": "This is the transcribed text from the audio file."
 }
 ```
 
+* The -F "file=@/path/to/your/audio_file.wav" specifies the path to your audio file. Replace it with the actual path to your audio file.
+* The -F "language=en" parameter is optional. If not specified, the language will be auto-detected.
+Supported audio formats include WAV, MP3, M4A, and WebM.
+
+The response includes the filename of the uploaded audio and the transcribed text.
 
 ## Loading and Accessing Multiple Models
 You can load and access multiple models simultaneously by using `X-Model-Id"` header.
