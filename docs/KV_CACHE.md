@@ -10,15 +10,9 @@ In this program, KV Cache can be utilized for Chat Completion in MLX. Using KV C
   + This is because the prompt includes the entire message history of the chat. In essence, we're having a "new" chat with the LLM each time while passing the previous chat history.
   + By using KV Cache, we reuse calculation results from previous text generations. This reduces the LLM's necessary calculations to only the newly received message. Consequently, the time for Prompt Evaluation is always proportional to the length of the latest message received from the user, unaffected by the volume of chat message history.
 
-While KV Cache has been implemented in MLX's `mlx-examples` repository for some time, as far as I could tell, it was limited to a single prompt and not suitable for multiple message exchanges like in a chat. With just a slight addition to the code in `mlx_lm.utils.generate_step`, I was able to enable KV Cache for continuous use and updates in chat-like interactions. I'm deeply grateful to the developers of `mlx` and `mlx-examples`. (For the code, please refer to the ext_generate_step function in `llm_process/generate_stream.py`)
+While KV Cache has been implemented in MLX's [`mlx-examples`](https://github.com/ml-explore/mlx-examples/tree/main/llms/mlx_lm) repository for some time, as far as I could tell, it was limited to a single prompt and not suitable for multiple message exchanges like in a chat. With just a slight addition to the code in [`mlx_lm.utils.generate_step`](https://github.com/ml-explore/mlx-examples/blob/main/llms/mlx_lm/utils.py), I was able to enable KV Cache for continuous use and updates in chat-like interactions. I'm deeply grateful to the developers of [`mlx`](https://github.com/ml-explore/mlx) and [`mlx-examples`]([url](https://github.com/ml-explore/mlx-examples/tree/main/llms/mlx_lm). 
 
 Following illustration showing the difference in prompts with and without KV Cache
-
-| Text Generation without KV Cache | Text Generation with KV Cache |
-----|----
-| (SVG) | (SVG)| 
-
-
 
 ### [Difference in Text Generation Speed With and Without KV Cache]
 I've created a video demonstrating how much the generation speed differs with and without KV Cache using `mlx-community/gemma-2-27b-it-8bit`.
@@ -30,9 +24,9 @@ I've created a video demonstrating how much the generation speed differs with an
 ### [Measurement Results]
 | | Without KV Cache | With KV Cache |
 ----|----|----
-| | (video) | (video) |
-|1st turn| prompt_tokens: 4487, prompt_eval_time: 14.320998374954797 sec | prompt_tokens: 4487, prompt_eval_time: 13.99744424992241 sec |
-|2nd turn| prompt_tokens: 4503, prompt_eval_time: 14.016152999945916 sec | prompt_tokens: 14, prompt_eval_time: 0.8610775420675054 sec |
+| |  https://github.com/user-attachments/assets/7fe31aa4-7f32-4c23-b11c-ede3acc152f5 | https://github.com/user-attachments/assets/221eebcb-c595-43b2-ba77-226a94e48f0f |
+|1st turn| prompt_tokens: 4487, prompt_eval_time: 14.320998374954797 sec | **prompt_tokens: 4487, prompt_eval_time: 13.99744424992241 sec** |
+|2nd turn| prompt_tokens: 4503, prompt_eval_time: 14.016152999945916 sec | **prompt_tokens: 14, prompt_eval_time: 0.8610775420675054 sec** |
 
 In the first turn, there's no difference as KV Cache isn't available, but in the second turn, due to the effectiveness of KV Cache, there's a significant difference in prompt eval token count, resulting in 17.5 times faster response.
 
