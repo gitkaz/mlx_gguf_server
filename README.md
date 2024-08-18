@@ -10,6 +10,7 @@
   - [Loading and Accessing Multiple Models](#loading-and-accessing-multiple-models)
   - [Process Management](#process-management)
   - [Transcribe feature](#transcribe-feature)
+  - [Prompt optimization using KV Cache](#prompt-optimization-using-kv-cache)
 - [Unsupported/Future improvements](#unsupported/future-improvements)
 
 
@@ -373,6 +374,9 @@ curl -X POST -H "Content-Type: application/json" -H "X-Model-Id: 1" -d '{"timeou
 ```
 # Transcribe Feature
 An audio transcription feature powered by the [`mlx_exaples/whisper`](https://github.com/ml-explore/mlx-examples/tree/main/whisper), allowing you to transcribe audio files using Whisper models.
+
+# Prompt optimization using KV Cache
+About this feature, read [docs/KC_CACHE.md]([https://github.com/gitkaz/mlx_gguf_server/blob/main/docs/KV_CACHE.md).
 
 ## Additinal instration for this feature
 You need to instarll `ffmpeg`. Please read the [`mlx_exaples/whisper`](https://github.com/ml-explore/mlx-examples/tree/main/whisper) page.
