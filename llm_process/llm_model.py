@@ -7,10 +7,11 @@ import uuid
 from llama_cpp import Llama
 from typing import Generator, List
 
+from .kv_cache_manager import KVCacheManager
 from .mlx_generate_stream import generate_stream
 from .task_response import TaskResponse
 from .logger_config import setup_logger
-logger = setup_logger(__name__, level="DEBUG")
+logger = setup_logger(__name__, level="INFO")
 
 import gc
 
@@ -23,6 +24,7 @@ def get_mlx_params(params) -> dict:
         'repetition_context_size' : getattr(params, 'repetition_context_size', 20),
         'top_p'                   : getattr(params, 'top_p', 1.0),
         'stop'                    : getattr(params, 'stop', []),
+        'kv_cache_session_id'     : getattr(params, 'kv_cache_session_id', 0),
     }
 
 def get_llama_cpp_params(params) -> dict:
@@ -91,6 +93,39 @@ class LLMModel:
         logger.debug(f"{model_info=}")
         return TaskResponse.create(200, model_info)
 
+    def get_kv_caches_info(self) -> TaskResponse:
+        try:
+            kv_cache_sessions = KVCacheManager.get_all_sessions_with_size()
+            logger.debug(f"{kv_cache_sessions=}")
+            return TaskResponse(200, f"{kv_cache_sessions=}")
+        except Exception as e:
+            return TaskResponse(500, e)
+
+    def remove_kv_cache(self, params) -> TaskResponse:
+        session_id = int(params.session_id)
+        try:
+            if not KVCacheManager.has_cache(session_id):
+                return TaskResponse(404, f"{session_id=} not found.")
+
+            KVCacheManager.remove_cache(session_id)
+
+            if KVCacheManager.has_cache(session_id):
+                return TaskResponse(500, f"server error. {session_id=} failed to remove.")
+
+            return TaskResponse(200, f"{session_id=} successfully removed.")
+        except Exception as e:
+            return TaskResponse(500, e)
+
+    def remove_old_kv_caches(self, params) -> TaskResponse:
+        seconds = int(params.seconds)
+        try:
+            KVCacheManager.remove_old_caches(seconds)
+
+            return TaskResponse(200, "old sessions successfully removed.")
+        except Exception as e:
+            return TaskResponse(500, e)
+
+
     def set_cache_liimt(self, params) -> TaskResponse:
         limit = int(params.cache_limit)
         try:
@@ -106,9 +141,9 @@ class LLMModel:
 
     def get_cache_memory(self) -> TaskResponse:
         try:
-            cach_memory_size = mx.metal.get_cache_memory()
-            logger.debug(f"{cach_memory_size=}")
-            return TaskResponse(200, f"{cach_memory_size=}")
+            cache_memory_size = mx.metal.get_cache_memory()
+            logger.debug(f"{cache_memory_size=}")
+            return TaskResponse(200, f"{cache_memory_size=}")
         except Exception as e:
             return TaskResponse(500, e)
         
@@ -145,7 +180,10 @@ class LLMModel:
     def completions_stream(self, params) -> Generator[TaskResponse, None, None]:
         mlx_llama_generate = MLX_LLAMA_Generate(self.model, self.tokenizer, self.model_type, self.model_name)
 
+        logger.debug("start completions_stream")
+
         for response in mlx_llama_generate.generate_completion(params):
+
             if not isinstance(response, dict):
                 error_message = f"error: generate_completion: response is not dict. {response=}"
                 logger.error(error_message)
@@ -157,9 +195,9 @@ class LLMModel:
                 status = 200
             yield TaskResponse.create(status, response)
 
-        logger.debug("completions_stream: Garbage Collect.")
-        del mlx_llama_generate 
-        gc.collect()
+        # logger.debug("completions_stream: Garbage Collect.")
+        # del mlx_llama_generate 
+        # gc.collect()
 
         if self.model_cache_limit > 0 and mx.metal.get_cache_memory() > int(self.model_cache_limit):
             self.force_metal_clear_cache()
@@ -201,14 +239,23 @@ class MLX_LLAMA_Generate(LLMModel):
             response = {"error": error_message}
             return response
 
-        def calculate_mlx_usage(self, prompt:str, all_tokens:list) -> dict:
+        def calculate_mlx_usage(self, prompt:str, all_tokens:List, perf_timer:List = []) -> dict:
             prompt_tokens = len(self.tokenizer.encode(prompt))
             completion_tokens = len(all_tokens)
             total_tokens = prompt_tokens + completion_tokens
+            if len(perf_timer) == 3:
+                prompt_eval_time = perf_timer[1] - perf_timer[0]
+                generation_time  = perf_timer[2] - perf_timer[1]
+            else:
+                prompt_eval_time = "not measured"
+                generation_time  = "not measured"
+
             usage = {}
             usage = {"prompt_tokens": prompt_tokens, 
                      "completion_tokens":completion_tokens, 
-                     "total_tokens": total_tokens
+                     "total_tokens": total_tokens,
+                     "prompt_eval_time": prompt_eval_time,
+                     "generation_time" : generation_time
                     }
             return usage
         
@@ -221,8 +268,19 @@ class MLX_LLAMA_Generate(LLMModel):
             logger.debug(f"{mlx_params=}")
 
             if params.apply_chat_template:
-                params.prompt = self.apply_chat_template(params.messages)
+                if params.kv_cache_session_id and KVCacheManager.has_cache(params.kv_cache_session_id):
+                    if len(params.messages) > 3:
+                        messages = [params.messages[-1]]
+                    else:
+                        messages = params.messages
+                else:
+                    messages = params.messages
+
+                params.prompt = self.apply_chat_template(messages)
                 logger.debug(f"Chat Template applied {params.prompt=}")
+
+            start_time = time.perf_counter()
+            is_first_token = True
 
             try:
                 for (text, tokens) in generate_stream(
@@ -234,7 +292,7 @@ class MLX_LLAMA_Generate(LLMModel):
                     all_tokens.extend(tokens)
                     if params.apply_chat_template:
                         if params.stream:
-                            response = {"id": request_id, 
+                            response = {"id": request_id,
                                         "object": "chat.completion.chunk", 
                                         "created": created_time, 
                                         "model": self.model_name, 
@@ -264,9 +322,14 @@ class MLX_LLAMA_Generate(LLMModel):
                                         "choices": [{"text": text}]
                                         }
                             response["usage"] = calculate_mlx_usage(self, params.prompt, all_tokens)
+                    if is_first_token:
+                        prompt_eval_time = time.perf_counter()
+                        is_first_token = False
                     yield response
 
                 if params.complete_text:
+                    generate_time = time.perf_counter()
+                    perf_timer = [start_time, prompt_eval_time, generate_time]
                     complete_text = self.tokenizer.decode(all_tokens)
                     response = {"id": request_id, 
                                 "object": "text_completion", 
@@ -274,7 +337,7 @@ class MLX_LLAMA_Generate(LLMModel):
                                 "model": self.model_name, 
                                 "choices": [{"text": "", "complete_text": complete_text}]
                                 }
-                    response["usage"] = calculate_mlx_usage(self, params.prompt, all_tokens)
+                    response["usage"] = calculate_mlx_usage(self, params.prompt, all_tokens, perf_timer)
                     yield response
     
             except Exception as e:

@@ -12,11 +12,11 @@ import time
 import psutil
 import uuid
 import uvicorn
-from typing import Union, Optional
+from typing import Union, Optional, Dict
 from multiprocessing import Process, Queue, Manager
 
 from llm_process.llm_process import start_llm_process
-from schemas import CompletionParams, TokenCountParams, ModelLoadParams, ProcessCleanParams, CacheLimitParams
+from schemas import CompletionParams, TokenCountParams, ModelLoadParams, ProcessCleanParams, CacheLimitParams, KVCacheParams
 from utils.utils import create_model_list
 from whisper_stt.whisper import AudioTranscriber
 from logging import getLogger
@@ -135,11 +135,25 @@ class LLMProcess:
                 del self.queues[request_id]
                 logger.debug(f"Removed expired request: {request_id}")
 
+
+    def print_queue_contents(self, queue):
+        queue_contents = []
+        while not queue.empty():
+            queue_contents.append(queue.get())
+
+        print(f"{queue_contents}")
+
+        for item in queue_contents:
+            queue.put(item)
+
     def get_queues_info(self):
         queue_info = {}
         queue_info["request_queue_size"]  = self.request_queue.qsize()
         queue_info["response_queue_size"] = self.response_queue.qsize()
         queue_info["queues"] = self.queues
+        # for queue debbuging.
+        # print("Queue debugging start")
+        # self.print_queue_contents(self.response_queue)
         return queue_info
 
     def get_cpu_usage(self):
@@ -245,7 +259,40 @@ async def get_v1_internal_model_info(model_id: str = Header(default="0", alias="
     model_name = llm_process.model_info["model_name"]
     model_type = llm_process.model_info["model_type"]
     return {"model_name": model_name, "model_type": model_type}
- 
+
+@app.get("/v1/internal/model/kv_cache/info")
+async def get_kv_cache_info(model_id: str = Header(default="0", alias="X-Model-Id")):
+    llm_process: LLMProcess = get_llm_process(model_id)
+
+    # create params variable (This is dummy. Just need for task_request arguemnt.)
+    params = CacheLimitParams
+
+    status_code, response = await llm_process.task_request('get_kv_caches_info', params=params)
+    if status_code == 200:
+        return {'kv_cache_sessions': response}
+    else: 
+        raise HTTPException(status_code=status_code, detail=response)
+
+@app.post("/v1/internal/model/kv_cache/remove_cache")
+async def deleve_kv_cache(params: KVCacheParams, model_id: str = Header(default="0", alias="X-Model-Id")):
+    llm_process: LLMProcess = get_llm_process(model_id)
+
+    status_code, response = await llm_process.task_request('remove_kv_cache', params=params)
+    if status_code == 200:
+        return {'result': response}
+    else: 
+        raise HTTPException(status_code=status_code, detail=response)
+
+@app.post("/v1/internal/model/kv_cache/remove_old_caches")
+async def deleve_kv_cache(params: KVCacheParams, model_id: str = Header(default="0", alias="X-Model-Id")):
+    llm_process: LLMProcess = get_llm_process(model_id)
+
+    status_code, response = await llm_process.task_request('remove_old_kv_caches', params=params)
+    if status_code == 200:
+        return {'result': response}
+    else: 
+        raise HTTPException(status_code=status_code, detail=response)
+
 
 @app.get("/v1/internal/model/cache_memory")
 async def get_cache_memory(model_id: str = Header(default="0", alias="X-Model-Id")):
@@ -316,6 +363,16 @@ def post_model_load(params: ModelLoadParams, model_id: str = Header(default="0",
             raise HTTPException(status_code=500, detail=f"Unload model failed. {message=}")
         raise HTTPException(status_code=status_code, detail=response)
     
+
+@app.get("/v1/audio/transcriptions")
+async def get_audio_transcribe_status():
+    """
+    Check if the audio transcription endpoint is enabled.
+    """
+    if app.state.enable_whisper:
+        return JSONResponse(content={"status": "ready"}, status_code=200)
+    else:
+        raise HTTPException(status_code=400, detail="Whisper transcription is not enabled")
 
 @app.post("/v1/audio/transcriptions")
 async def post_audio_transcribe(

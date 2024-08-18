@@ -15,6 +15,7 @@ class CompletionParams(BaseModel):
     stop:list = []
     repetition_penalty: float = None    # mlx only
     repetition_context_size: int = 20   # mlx only
+    kv_cache_session_id: int = None     # mlx only
     top_k: int = 0                      # llama-cpp only
     min_p: float = 0.05                 # llama-cpp only
     typical_p: float = 1.0              # llama-cpp only
@@ -49,8 +50,11 @@ class TokenCountParams(BaseModel):
         return self
 
 class CacheLimitParams(BaseModel):
-    model: str = "dummy"
     cache_limit: int = 0
+
+class KVCacheParams(BaseModel):
+    session_id: int = 0
+    seconds   : int = 0
 
 
 class ModelLoadParams(BaseModel):
