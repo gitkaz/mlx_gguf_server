@@ -1,5 +1,3 @@
-Using KV Cache
-
 ## [Introduction]
 
 ### [About KV Cache]
