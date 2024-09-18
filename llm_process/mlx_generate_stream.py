@@ -9,6 +9,9 @@ from mlx_lm.sample_utils import top_p_sampling, min_p_sampling, categorical_samp
 from mlx_lm.models.base import KVCache, RotatingKVCache
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
+from .logger_config import setup_logger
+logger = setup_logger(__name__, level="DEBUG")
+
 def generate_stream(
     model: nn.Module,
     tokenizer: Union[PreTrainedTokenizer, TokenizerWrapper],
@@ -81,8 +84,13 @@ def generate_stream(
         if stream is False:
             continue
 
-        detokenizer.finalize()
-        response = (detokenizer.last_segment, [token])
+        try:
+            detokenizer.finalize()
+            response = (detokenizer.last_segment, [token])
+        except Exception as e:
+            logger.error(f"Error in generate_stream: {e}")
+            response = ("?", [token])
+
         yield response
 
     if stream is False:

@@ -5,7 +5,7 @@ from .llm_model import LLMModel
 from .task_response import TaskResponse
 
 from .logger_config import setup_logger
-logger = setup_logger(__name__, level="INFO")
+logger = setup_logger(__name__, level="DEBUG")
 
 
 async def start_llm_process(request_queue: Queue, response_queue: Queue):

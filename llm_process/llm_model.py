@@ -11,7 +11,7 @@ from .kv_cache_manager import KVCacheManager
 from .mlx_generate_stream import generate_stream
 from .task_response import TaskResponse
 from .logger_config import setup_logger
-logger = setup_logger(__name__, level="INFO")
+logger = setup_logger(__name__, level="DEBUG")
 
 import gc
 
@@ -341,6 +341,7 @@ class MLX_LLAMA_Generate(LLMModel):
                     yield response
     
             except Exception as e:
+                logger.error(f"Error in generate_stream: {e}, text: {text}, tokens: {tokens}")
                 yield exception_message_in_generate(e, self.model_type)
 
         elif self.model_type == 'llama-cpp':
