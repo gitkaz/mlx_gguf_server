@@ -6,7 +6,7 @@ from typing import Optional, Union, List, Dict, Generator, Optional, Tuple, Unio
 from .kv_cache_manager import KVCacheManager
 from mlx_lm.utils import apply_repetition_penalty, generate_step
 from mlx_lm.sample_utils import top_p_sampling, min_p_sampling, categorical_sampling
-from mlx_lm.models.base import KVCache, RotatingKVCache
+from mlx_lm.models.cache import KVCache, RotatingKVCache
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from .logger_config import setup_logger
