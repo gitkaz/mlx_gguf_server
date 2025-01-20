@@ -16,7 +16,7 @@ from typing import Union, Optional, Dict
 from multiprocessing import Process, Queue, Manager
 
 from llm_process.llm_process import start_llm_process
-from schemas import CompletionParams, TokenCountParams, ModelLoadParams, ProcessCleanParams, CacheLimitParams, KVCacheParams
+from schemas import CompletionParams, TokenCountParams, ModelLoadParams, ProcessCleanParams, CacheLimitParams
 from utils.utils import create_model_list
 from whisper_stt.whisper import AudioTranscriber
 from logging import getLogger
@@ -260,40 +260,6 @@ async def get_v1_internal_model_info(model_id: str = Header(default="0", alias="
     model_type = llm_process.model_info["model_type"]
     return {"model_name": model_name, "model_type": model_type}
 
-@app.get("/v1/internal/model/kv_cache/info")
-async def get_kv_cache_info(model_id: str = Header(default="0", alias="X-Model-Id")):
-    llm_process: LLMProcess = get_llm_process(model_id)
-
-    # create params variable (This is dummy. Just need for task_request arguemnt.)
-    params = CacheLimitParams
-
-    status_code, response = await llm_process.task_request('get_kv_caches_info', params=params)
-    if status_code == 200:
-        return {'kv_cache_sessions': response}
-    else: 
-        raise HTTPException(status_code=status_code, detail=response)
-
-@app.post("/v1/internal/model/kv_cache/remove_cache")
-async def deleve_kv_cache(params: KVCacheParams, model_id: str = Header(default="0", alias="X-Model-Id")):
-    llm_process: LLMProcess = get_llm_process(model_id)
-
-    status_code, response = await llm_process.task_request('remove_kv_cache', params=params)
-    if status_code == 200:
-        return {'result': response}
-    else: 
-        raise HTTPException(status_code=status_code, detail=response)
-
-@app.post("/v1/internal/model/kv_cache/remove_old_caches")
-async def deleve_kv_cache(params: KVCacheParams, model_id: str = Header(default="0", alias="X-Model-Id")):
-    llm_process: LLMProcess = get_llm_process(model_id)
-
-    status_code, response = await llm_process.task_request('remove_old_kv_caches', params=params)
-    if status_code == 200:
-        return {'result': response}
-    else: 
-        raise HTTPException(status_code=status_code, detail=response)
-
-
 @app.get("/v1/internal/model/cache_memory")
 async def get_cache_memory(model_id: str = Header(default="0", alias="X-Model-Id")):
     llm_process: LLMProcess = get_llm_process(model_id)
@@ -408,6 +374,7 @@ def parse_arguments():
     parser.add_argument('-a', '--addr', type=str, default='127.0.0.1', help='ip addr to listen (default: 127.0.0.1)')
     parser.add_argument('-p', '--port', type=int, default=4000, help='port number to listen (default: 4000)')
     parser.add_argument('--log-level', choices=['debug', 'info', 'warning', 'error', 'critical'], default='info', help='Log level')
+    parser.add_argument('--max-kv-size', type=int, default=10, help='max kv cache files size (GB)')
     parser.add_argument('--enable-whisper', action='store_true', help='Enable Whisper transcription')
     parser.add_argument('--whisper-model', type=str, help='HuggingFace path or local filepath to Whisper model')
     args = parser.parse_args()
@@ -424,5 +391,8 @@ if __name__ == "__main__":
         exit(1)
     else:
         app.state.enable_whisper = False
+
+    os.environ["MAX_KV_SIZE_GB"] = str(args.max_kv_size)
+    os.environ["LOG_LEVEL"]      = args.log_level.upper()
 
     uvicorn.run(app, host=args.addr, port=args.port, access_log=True, log_level=args.log_level)
