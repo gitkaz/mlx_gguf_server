@@ -1,10 +1,11 @@
 from pydantic import BaseModel, model_validator, Field
 from typing_extensions import Self
+from typing import Optional, Dict, List
 
 class CompletionParams(BaseModel):
     model: str = "dummy"
     prompt: str = ""
-    messages: list[dict] = []
+    messages: List[Dict] = []
     max_tokens: int = 4096
     temperature: float = 0.8
     seed: int = None
@@ -13,6 +14,7 @@ class CompletionParams(BaseModel):
     complete_text: bool = False
     top_p:float = 1.0
     stop:list = []
+    logit_bias: Optional[Dict[int, float]] = None # mlx only
     repetition_penalty: float = None    # mlx only
     repetition_context_size: int = 20   # mlx only
     use_kv_cache: bool = False          # mlx only
