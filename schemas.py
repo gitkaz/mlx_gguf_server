@@ -61,3 +61,10 @@ class ModelLoadParams(BaseModel):
 
 class ProcessCleanParams(BaseModel):
     timeout: int
+
+class KokoroTtsParams(BaseModel):
+    text: str
+    lang_code: str    = "a"
+    voice: str        = "af_heart"
+    speed: int        = 1
+    split_pattern:str = r'\n+'

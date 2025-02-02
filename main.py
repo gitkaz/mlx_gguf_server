@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Header, HTTPException, Request, UploadFile, File, Form, Depends
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import Response, StreamingResponse, JSONResponse
 from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -16,7 +16,9 @@ from typing import Union, Optional, Dict
 from multiprocessing import Process, Queue, Manager
 
 from llm_process.llm_process import start_llm_process
-from schemas import CompletionParams, TokenCountParams, ModelLoadParams, ProcessCleanParams, CacheLimitParams
+import tts.kokoro_tts.run_process
+
+from schemas import CompletionParams, TokenCountParams, ModelLoadParams, ProcessCleanParams, CacheLimitParams, KokoroTtsParams
 from utils.utils import create_model_list
 from whisper_stt.whisper import AudioTranscriber
 from logging import getLogger
@@ -330,6 +332,42 @@ def post_model_load(params: ModelLoadParams, model_id: str = Header(default="0",
         raise HTTPException(status_code=status_code, detail=response)
     
 
+@app.post("/kokoro/generate")
+async def post_kokoro_generate(params: KokoroTtsParams):
+
+    if not app.state.enable_kokoro_tts:
+        raise HTTPException(status_code=400, detail="Kokoro TTS is not enabled")
+
+    try:
+        queue = Queue()
+        process = Process(target=tts.kokoro_tts.run_process.run, args=(params.model_dump(), queue))
+        process.start()
+        
+        audio_data = queue.get() # 結果をqueueから取得
+        process.join()
+
+        if isinstance(audio_data,str):
+          try:
+              # json文字列だった場合はパース
+            audio_data = json.loads(audio_data)
+            if "error" in audio_data:
+                  raise HTTPException(status_code=500, detail=f"Error at kokoro-TTS: {audio_data['error']}")
+          except Exception: # jsonじゃない場合はそのまま
+              pass
+
+        if isinstance(audio_data,dict):
+            raise HTTPException(status_code=500, detail=f"Error at kokoro-TTS: {audio_data}")
+
+        # バイト列で返す
+        logger.debug(f"debug: kokoro response: {audio_data[:100] if isinstance(audio_data, bytes) else str(audio_data)[:100]} ...")
+        return Response(
+            content=audio_data,
+            media_type="audio/mpeg"  # mp3形式で返す場合
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error at kokoro-TTS: {str(e)}")
+
 @app.get("/v1/audio/transcriptions")
 async def get_audio_transcribe_status():
     """
@@ -375,22 +413,25 @@ def parse_arguments():
     parser.add_argument('-p', '--port', type=int, default=4000, help='port number to listen (default: 4000)')
     parser.add_argument('--log-level', choices=['debug', 'info', 'warning', 'error', 'critical'], default='info', help='Log level')
     parser.add_argument('--max-kv-size', type=int, default=10, help='max kv cache files size (GB)')
-    parser.add_argument('--enable-whisper', action='store_true', help='Enable Whisper transcription')
-    parser.add_argument('--whisper-model', type=str, help='HuggingFace path or local filepath to Whisper model')
+    parser.add_argument('--whisper-model', type=str, help='HuggingFace path or local filepath to Whisper model', default=None)
+    parser.add_argument('--kokoro-config', type=str, help='Kokoro-82M config path', default=None)
     args = parser.parse_args()
     return args
 
 if __name__ == "__main__":
     args = parse_arguments()
 
-    if args.enable_whisper and args.whisper_model:
-        app.state.enable_whisper = True
+    if args.whisper_model:
         app.state.whisper_model = args.whisper_model
-    elif args.enable_whisper or args.whisper_model:
-        print("Error: Both --enable-whisper and --whisper-model must be provided to enable Whisper transcription")
-        exit(1)
+        app.state.enable_whisper = True
     else:
         app.state.enable_whisper = False
+
+    if args.kokoro_config:
+        os.environ["KOKORO_CONFIG"] = str(args.kokoro_config)
+        app.state.enable_kokoro_tts = True
+    else:
+        app.state.enable_kokoro_tts = False
 
     os.environ["MAX_KV_SIZE_GB"] = str(args.max_kv_size)
     os.environ["LOG_LEVEL"]      = args.log_level.upper()
