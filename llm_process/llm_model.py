@@ -8,6 +8,7 @@ import uuid
 from llama_cpp import Llama
 from typing import Generator, List
 from mlx_lm.utils import stream_generate
+from mlx_lm.sample_utils import make_logits_processors, make_sampler
 
 from .kv_cache_manager import load_kv_cache, save_kv_cache, clean_kv_cache
 from .task_response import TaskResponse
@@ -28,8 +29,9 @@ def get_mlx_extension_params(params) -> dict:
 
 def get_mlx_params(params) -> dict:
     return {
-        'temp'                    : getattr(params, 'temperature', 1.0),
+        'temperature'             : getattr(params, 'temperature', 1.0),
         'max_tokens'              : getattr(params, 'max_tokens', 4096),
+        'logit_bias'              : getattr(params, 'logit_bias', None),
         'repetition_penalty'      : getattr(params, 'repetition_penalty', None),
         'repetition_context_size' : getattr(params, 'repetition_context_size', 20),
         'top_p'                   : getattr(params, 'top_p', 1.0),
@@ -244,6 +246,11 @@ class MLX_LLAMA_Generate(LLMModel):
         if self.model_type == 'mlx':
             mlx_params = get_mlx_params(params)
             mlx_ext_params = get_mlx_extension_params(params)
+            sampler = make_sampler(params.temperature, top_p=params.top_p)
+            logits_processors = make_logits_processors(
+                params.logit_bias, params.repetition_penalty, params.repetition_context_size
+            )
+
             request_id = str(uuid.uuid4())
             created_time = int(time.time())
             all_tokens = []
@@ -270,7 +277,8 @@ class MLX_LLAMA_Generate(LLMModel):
                     tokenizer=self.tokenizer,
                     prompt=params.prompt,
                     prompt_cache=kv_cache,
-                    **mlx_params
+                    sampler = sampler,
+                    logits_processors = logits_processors,
                     ):
                     text = item.text
                     tokens = item.token
@@ -350,7 +358,7 @@ class MLX_LLAMA_Generate(LLMModel):
                     yield response
     
             except Exception as e:
-                logger.error(f"Error in generate_completion: {e}, text: {text}, tokens: {tokens}")
+                logger.error(f"Error in generate_completion: {str(e)}, text: {text}, tokens: {tokens}")
                 yield exception_message_in_generate(e, self.model_type)
 
         elif self.model_type == 'llama-cpp':
