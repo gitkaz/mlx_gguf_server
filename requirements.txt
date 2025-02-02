@@ -10,3 +10,7 @@ torch
 sentencepiece
 psutil
 llama-cpp-python
+kokoro
+misaki[ja]
+scipy
+pydub
