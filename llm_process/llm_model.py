@@ -276,6 +276,7 @@ class MLX_LLAMA_Generate(LLMModel):
                     model=self.model, 
                     tokenizer=self.tokenizer,
                     prompt=params.prompt,
+                    max_tokens=params.max_tokens,
                     prompt_cache=kv_cache,
                     sampler = sampler,
                     logits_processors = logits_processors,
