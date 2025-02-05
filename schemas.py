@@ -18,6 +18,7 @@ class CompletionParams(BaseModel):
     repetition_penalty: float = None    # mlx only
     repetition_context_size: int = 20   # mlx only
     use_kv_cache: bool = False          # mlx only
+    tools: list = None                  # mlx only
     top_k: int = 0                      # llama-cpp only
     min_p: float = 0.05                 # llama-cpp only
     typical_p: float = 1.0              # llama-cpp only
