@@ -35,6 +35,7 @@ def get_mlx_params(params) -> dict:
         'repetition_penalty'      : getattr(params, 'repetition_penalty', None),
         'repetition_context_size' : getattr(params, 'repetition_context_size', 20),
         'top_p'                   : getattr(params, 'top_p', 1.0),
+        'tools'                   : getattr(params, 'tools', None),
     }
 
 def get_llama_cpp_params(params) -> dict:
@@ -177,11 +178,11 @@ class LLMModel:
         # gc.collect()
    
 
-    def apply_chat_template(self, messages: List[dict]) -> str:
+    def apply_chat_template(self, messages: List[dict], tools=None) -> str:
         chatml_instruct_template="{%- set ns = namespace(found=false) -%}{%- for message in messages -%}{%- if message['role'] == 'system' -%}{%- set ns.found = true -%}{%- endif -%}{%- endfor -%}{%- for message in messages %}{%- if message['role'] == 'system' -%}{{- '<|im_start|>system\n' + message['content'].rstrip() + '<|im_end|>\n' -}}{%- else -%}{%- if message['role'] == 'user' -%}{{-'<|im_start|>user\n' + message['content'].rstrip() + '<|im_end|>\n'-}}{%- else -%}{{-'<|im_start|>assistant\n' + message['content'] + '<|im_end|>\n' -}}{%- endif -%}{%- endif -%}{%- endfor -%}{%- if add_generation_prompt -%}{{-'<|im_start|>assistant\n'-}}{%- endif -%}"
 
         try:
-            chat_prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            chat_prompt = self.tokenizer.apply_chat_template(messages, tools=tools, tokenize=False, add_generation_prompt=True)
             logger.debug(f"{chat_prompt=}")
         except:
             logger.warn("apply chat template failed. try default format.")
@@ -263,9 +264,9 @@ class MLX_LLAMA_Generate(LLMModel):
                 # kv cache の生成。Param "use_kv_cache" が True かつ messages が 2以上であること
                 if mlx_ext_params["use_kv_cache"] and len(messages) > 2:
                     kv_cache, kv_cache_metadata, index, kv_load_stats = load_kv_cache(self.model, messages)
-                    params.prompt = self.apply_chat_template(messages[index:])
+                    params.prompt = self.apply_chat_template(messages[index:], tools=mlx_params["tools"])
                 else:
-                    params.prompt = self.apply_chat_template(messages)
+                    params.prompt = self.apply_chat_template(messages, tools=mlx_params["tools"])
                 logger.debug(f"Chat Template applied {params.prompt=}")
 
             start_time = time.perf_counter()
