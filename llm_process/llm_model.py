@@ -337,27 +337,30 @@ class MLX_LLAMA_Generate(LLMModel):
                         response["usage"] = calculate_mlx_usage(self, params.prompt, all_tokens)
                         yield response
 
-                elif params.complete_text:
-                    generate_time = time.perf_counter()
-                    perf_timer = [start_time, prompt_eval_time, generate_time]
+                if params.complete_text:
                     complete_text = self.tokenizer.decode(all_tokens)
-                    response = {"id": request_id, 
-                                "object": "text_completion", 
-                                "created": created_time, 
-                                "model": self.model_name, 
-                                "choices": [{"text": "", "complete_text": complete_text}]
-                                }
-                    response["usage"] = calculate_mlx_usage(self, params.prompt, all_tokens, perf_timer)
+                else:
+                    complete_text = ""
+
+                generate_time = time.perf_counter()
+                perf_timer = [start_time, prompt_eval_time, generate_time]
+                response = {"id": request_id, 
+                            "object": "text_completion", 
+                            "created": created_time, 
+                            "model": self.model_name, 
+                            "choices": [{"text": "", "complete_text": complete_text}]
+                            }
+                response["usage"] = calculate_mlx_usage(self, params.prompt, all_tokens, perf_timer)
+                if kv_cache:
                     response["usage"]["kv_cache"] = {}
-                    if kv_cache:
-                        cached_token_count = int(response["usage"]["total_tokens"]) + int(kv_cache_metadata["token_count"])
-                        kv_cache_metadata["model_name"]    = str(self.model_name)
-                        kv_cache_metadata["chat_template"] = str(self.tokenizer.chat_template)
-                        kv_cache_metadata["token_count"]   = str(cached_token_count)
-                        save_kv_cache(message_id=request_id, kv_cache=kv_cache, metadata=kv_cache_metadata)
-                        response["usage"]["kv_cache"]["cached_tokens"] = kv_cache_metadata["token_count"]
-                        response["usage"]["kv_cache"]["stats"] = kv_load_stats
-                    yield response
+                    cached_token_count = int(response["usage"]["total_tokens"]) + int(kv_cache_metadata["token_count"])
+                    kv_cache_metadata["model_name"]    = str(self.model_name)
+                    kv_cache_metadata["chat_template"] = str(self.tokenizer.chat_template)
+                    kv_cache_metadata["token_count"]   = str(cached_token_count)
+                    save_kv_cache(message_id=request_id, kv_cache=kv_cache, metadata=kv_cache_metadata)
+                    response["usage"]["kv_cache"]["cached_tokens"] = kv_cache_metadata["token_count"]
+                    response["usage"]["kv_cache"]["stats"] = kv_load_stats
+                yield response
     
             except Exception as e:
                 logger.error(f"Error in generate_completion: {str(e)}, text: {text}, tokens: {tokens}")
