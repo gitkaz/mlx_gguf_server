@@ -5,10 +5,10 @@ from .llm_model import LLMModel
 from .task_response import TaskResponse
 from .logger_config import setup_logger
 
+log_level = os.environ.get("LOG_LEVEL", "INFO")
+logger = setup_logger(__name__, level=log_level)
 
 async def start_llm_process(request_queue: Queue, response_queue: Queue):
-    log_level = os.environ.get("LOG_LEVEL", "INFO")
-    logger = setup_logger(__name__, level=log_level)
     logger.info(f"start llm process. log_level={log_level}")
 
     model = LLMModel()
