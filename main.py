@@ -17,8 +17,10 @@ from multiprocessing import Process, Queue, Manager
 
 from llm_process.llm_process import start_llm_process
 import tts.kokoro_tts.run_process
+import embedding.run_process
 
-from schemas import CompletionParams, TokenCountParams, ModelLoadParams, ProcessCleanParams, CacheLimitParams, KokoroTtsParams
+from schemas import CompletionParams, TokenCountParams, ModelLoadParams, ProcessCleanParams, CacheLimitParams, KokoroTtsParams, EmbeddingsParams
+from embedding.embedding_schemas import OpenAICompatibleEmbeddings
 from utils.utils import create_model_list
 from whisper_stt.whisper import AudioTranscriber
 from logging import getLogger
@@ -406,6 +408,28 @@ async def post_audio_transcribe(
         raise HTTPException(status_code=500, detail=result["error"])
 
     return JSONResponse(content={"filename": new_filename, "text": result["text"]}, status_code=200)
+
+
+@app.post("/v1/embeddings", response_model=OpenAICompatibleEmbeddings)
+async def post_embeddings(params: EmbeddingsParams):
+    try:
+        queue = Queue()
+        process = Process(target=embedding.run_process.run, args=(params.model_dump(), queue))
+        process.start()
+
+        embeddings = queue.get()
+        process.join()
+
+        if isinstance(embeddings, OpenAICompatibleEmbeddings):
+            return embeddings
+        elif isinstance(embeddings, Exception):
+            raise HTTPException(status_code=500, detail=str(embeddings))
+        else:
+            raise HTTPException(status_code=500, detail="Error at embedding: Unexpected data type")
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error at embedding: {str(e)}")
+
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description='FastAPI server arguments')

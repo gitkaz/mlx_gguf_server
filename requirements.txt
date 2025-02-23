@@ -14,3 +14,4 @@ kokoro
 misaki[ja]
 scipy
 pydub
+einops
