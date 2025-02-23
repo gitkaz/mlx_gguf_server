@@ -1,6 +1,6 @@
 from pydantic import BaseModel, model_validator, Field
 from typing_extensions import Self
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Union, Literal
 
 class CompletionParams(BaseModel):
     model: str = "dummy"
@@ -69,3 +69,25 @@ class KokoroTtsParams(BaseModel):
     voice: str        = "af_heart"
     speed: int        = 1
     split_pattern:str = r'\n+'
+
+
+class EmbeddingsParams(BaseModel):
+    """
+    Parameters of Embedding API. Referred by OpenAI API.
+    Refs:
+        https://platform.openai.com/docs/api-reference/embeddings/create
+    """
+    input: Union[str, List[str]] = Field(
+        ...,
+        description="Input text to embed, encoded as a string or array of strings. "
+                    "To embed multiple inputs in a single request, pass an array of strings. "
+                    "The input must not exceed the max input tokens for the model."
+    )
+    encoding_format: Optional[str] = Field(
+        default="float",
+        description="The format to return the embeddings in. Can be either float or base64."
+    )
+    dimensions: Optional[Literal[32, 64, 128, 256, 512, 768, 1024]] = Field(
+        default=None,
+        description="The number of dimensions the resulting output embeddings should have."
+    )
