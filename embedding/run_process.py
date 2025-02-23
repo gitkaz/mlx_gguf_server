@@ -13,8 +13,8 @@ class TokenLimitExceededError(Exception):
         self.length = length
 
 def run(params: dict, queue):
-    model = AutoModel.from_pretrained("jinaai/jina-embeddings-v3", trust_remote_code=True)
-    tokenizer = AutoTokenizer.from_pretrained("jinaai/jina-embeddings-v3", trust_remote_code=True)
+    model = AutoModel.from_pretrained("embedding/models/jina-embeddings-v3", local_files_only=True, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained("embedding/models/jina-embeddings-v3", local_files_only=True, trust_remote_code=True)
 
     try:
         texts = params["input"]
