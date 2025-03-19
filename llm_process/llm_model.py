@@ -133,7 +133,11 @@ class LLMModel:
     def get_max_position_embeddings(self, model_path):
         with open(f"{model_path}/config.json", "r") as f:
             config = json.load(f)
-            return config.get("max_position_embeddings")
+            if config.get("text_config"):
+                max_position_embeddings = config["text_config"].get("max_position_embeddings")
+            else:
+                max_position_embeddings = config.get("max_position_embeddings")
+            return max_position_embeddings
 
     def token_count(self, params) -> TaskResponse:
         try:
