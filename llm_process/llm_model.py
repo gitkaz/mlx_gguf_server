@@ -272,8 +272,8 @@ class MLX_LLAMA_Generate(LLMModel):
             if params.apply_chat_template:
                 messages = params.messages
 
-                # kv cache の生成。Param "use_kv_cache" が True かつ messages が 2以上であること
-                if mlx_ext_params["use_kv_cache"] and len(messages) > 2:
+                # kv cache の生成
+                if mlx_ext_params["use_kv_cache"]:
                     kv_cache, kv_cache_metadata, index, kv_load_stats = load_kv_cache(self.model, messages)
                     params.prompt = self.apply_chat_template(messages[index:], tools=mlx_params["tools"])
                 else:
