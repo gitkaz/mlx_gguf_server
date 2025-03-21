@@ -133,7 +133,14 @@ class LLMModel:
     def get_max_position_embeddings(self, model_path):
         with open(f"{model_path}/config.json", "r") as f:
             config = json.load(f)
-            if config.get("text_config"):
+            if config.get("rope_scaling") and \
+               config["rope_scaling"].get("factor") and \
+               config["rope_scaling"].get("original_max_position_embeddings"):
+                factor = config["rope_scaling"].get("factor")
+                original_max_position_embeddings = config["rope_scaling"].get("original_max_position_embeddings")
+                max_position_embeddings = int(factor * original_max_position_embeddings)
+                
+            elif config.get("text_config"):
                 max_position_embeddings = config["text_config"].get("max_position_embeddings")
             else:
                 max_position_embeddings = config.get("max_position_embeddings")
