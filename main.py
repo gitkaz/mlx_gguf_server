@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Header, HTTPException, Request, UploadFile, File, Form, Depends
-from fastapi.responses import Response, StreamingResponse, JSONResponse
+from fastapi import FastAPI, Header, HTTPException, Request, File, UploadFile, Form, Depends
+from fastapi.responses import Response, StreamingResponse, JSONResponse, FileResponse
 from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -430,6 +430,45 @@ async def post_embeddings(params: EmbeddingsParams):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error at embedding: {str(e)}")
 
+@app.get("/v1/internal/model/kv_cache/export/{session_id}")
+async def export_kv_cache(
+    session_id: str,
+    model_id: str = Header(..., alias="X-Model-Id")
+):
+    """
+    Export a KV Cache file for a specific session.
+    """
+    cache_dir = "llm_process/kv_cache/"
+    file_path = os.path.join(cache_dir, f"{session_id}.safetensors")
+
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Cache file not found")
+
+    return FileResponse(
+        path=file_path,
+        media_type="application/octet-stream",
+        filename=f"{session_id}.safetensors"
+    )
+
+@app.post("/v1/internal/model/kv_cache/import/{session_id}")
+async def import_kv_cache(
+    session_id: str,
+    file: UploadFile,
+    model_id: str = Header(..., alias="X-Model-Id")
+):
+    """
+    Import a KV Cache file for a specific session.
+    """
+    cache_dir = "llm_process/kv_cache/"
+    os.makedirs(cache_dir, exist_ok=True)
+    file_path = os.path.join(cache_dir, f"{session_id}.safetensors")
+
+    try:
+        with open(file_path, "wb") as buffer:
+            buffer.write(await file.read())
+        return {"status": "success", "message": f"Cache {session_id} imported"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description='FastAPI server arguments')
