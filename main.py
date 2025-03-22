@@ -22,6 +22,7 @@ import embedding.run_process
 from schemas import CompletionParams, TokenCountParams, ModelLoadParams, ProcessCleanParams, CacheLimitParams, KokoroTtsParams, EmbeddingsParams
 from embedding.embedding_schemas import OpenAICompatibleEmbeddings
 from utils.utils import create_model_list
+from utils.kv_cache_utils import prepare_temp_dir, validate_session_id, validate_filename, process_upload_file
 from whisper_stt.whisper import AudioTranscriber
 from logging import getLogger
 
@@ -32,6 +33,7 @@ logger = getLogger("uvicorn")
 async def lifespan(app: FastAPI):
     logger.info("starting....")
 
+    app.state.tmpdir = "temp"
     app.state.models = create_model_list()
     app.state.llm_processes = {}
     init_task_scheduler()
@@ -431,44 +433,70 @@ async def post_embeddings(params: EmbeddingsParams):
         raise HTTPException(status_code=500, detail=f"Error at embedding: {str(e)}")
 
 @app.get("/v1/internal/model/kv_cache/export/{session_id}")
-async def export_kv_cache(
-    session_id: str,
-    model_id: str = Header(..., alias="X-Model-Id")
-):
+async def export_kv_cache(session_id: str):
     """
-    Export a KV Cache file for a specific session.
+    Export a KV Cache file with optional compression.
     """
+    # Validate Session ID is UUIDv4
+    validate_session_id(session_id=session_id)
+
     cache_dir = "llm_process/kv_cache/"
     file_path = os.path.join(cache_dir, f"{session_id}.safetensors")
 
     if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="Cache file not found")
+        raise HTTPException(404, "Cache file not found")
+
+    response_path = file_path
+    media_type = "application/octet-stream"
+    filename = f"{session_id}.safetensors"
 
     return FileResponse(
-        path=file_path,
-        media_type="application/octet-stream",
-        filename=f"{session_id}.safetensors"
+        path=response_path,
+        media_type=media_type,
+        filename=filename
     )
 
-@app.post("/v1/internal/model/kv_cache/import/{session_id}")
-async def import_kv_cache(
-    session_id: str,
-    file: UploadFile,
-    model_id: str = Header(..., alias="X-Model-Id")
-):
-    """
-    Import a KV Cache file for a specific session.
-    """
-    cache_dir = "llm_process/kv_cache/"
-    os.makedirs(cache_dir, exist_ok=True)
-    file_path = os.path.join(cache_dir, f"{session_id}.safetensors")
 
+@app.post("/v1/internal/model/kv_cache/import/{session_id}")
+async def import_kv_cache(session_id: str, file: UploadFile):
+    """
+    Import a KV Cache file for a specific session with strict validation.
+    Uploaded KV Cache file must be safetensors file or gz compressed safetensors.
+    Uploaded KV Cache filename must be <UUIDv4>.safetensors or <UUIDv4>.safetensors.gz. This UUID is used as session_id
+    """
     try:
-        with open(file_path, "wb") as buffer:
-            buffer.write(await file.read())
+        # Validate inputs
+        validate_session_id(session_id=session_id)
+        validate_filename(session_id=session_id, filename=file.filename)
+
+        # Create temporary directory inside llm_process/kv_cache/tmp/
+        temp_dir = prepare_temp_dir(tmp_base_dir=app.state.tmpdir)
+        upload_file_path = os.path.join(temp_dir, file.filename)
+
+        # process uploaded file
+        upload_file_path = await process_upload_file(file=file, file_path=upload_file_path)
+
+        # Save to target location
+        cache_dir = "llm_process/kv_cache/"
+        target_path = os.path.join(cache_dir, f"{session_id}.safetensors")
+        os.rename(upload_file_path, target_path)
+
         return {"status": "success", "message": f"Cache {session_id} imported"}
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # Cleanup temp files on error
+        if os.path.exists(upload_file_path):
+            os.remove(upload_file_path)
+        if os.path.exists(upload_file_path):
+            os.remove(upload_file_path)
+        os.rmdir(temp_dir)
+        raise HTTPException(500, str(e)) from e
+
+    finally:
+        # Ensure temp directory is cleaned up
+        if os.path.exists(temp_dir):
+            os.rmdir(temp_dir)
+
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description='FastAPI server arguments')
