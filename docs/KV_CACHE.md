@@ -1,68 +1,110 @@
-# This documentation is out of date and does not match current implementations and needs to be updated. 
-
-## [Introduction]
-
-### [About KV Cache]
-In this program, KV Cache can be utilized for Chat Completion in MLX. Using KV Cache offers the following benefits:
+## About KV Cache
+In mlx_gguf_server, KV Cache can be utilized for Chat Completion in MLX models. Using KV Cache offers the following benefits:
 
 * Fast Prompt Evaluation
-  + MLX has a challenge of taking longer for Prompt Evaluation compared to Nvidia GPUs. This becomes more pronounced as prompts get longer. In chat scenarios, response speed gradually slows down as the conversation with the LLM lengthens.
-  + This is because the prompt includes the entire message history of the chat. In essence, we're having a "new" chat with the LLM each time while passing the previous chat history.
-  + By using KV Cache, we reuse calculation results from previous text generations. This reduces the LLM's necessary calculations to only the newly received message. Consequently, the time for Prompt Evaluation is always proportional to the length of the latest message received from the user, unaffected by the volume of chat message history.
+  - MLX has a challenge of taking longer for Prompt Evaluation compared to Nvidia GPUs. This becomes more pronounced as prompts get longer. In chat scenarios, response speed gradually slows down as the conversation with the LLM lengthens.
+  - This is because the prompt includes the entire message history of the chat. In essence, we're having a "new" chat with the LLM each time while passing the previous chat history.
+  - By using KV Cache, we reuse calculation results from previous text generations. This reduces the LLM's necessary calculations to only the newly received message. Consequently, the time for Prompt Evaluation is always proportional to the length of the latest message received from the user, unaffected by the volume of chat message history.
 
-While KV Cache has been implemented in MLX's [`mlx-examples`](https://github.com/ml-explore/mlx-examples/tree/main/llms/mlx_lm) repository for some time, as far as I could tell, it was limited to a single prompt and not suitable for multiple message exchanges like in a chat. With just a slight addition to the code in [`mlx_lm.utils.generate_step`](https://github.com/ml-explore/mlx-examples/blob/main/llms/mlx_lm/utils.py), I was able to enable KV Cache for continuous use and updates in chat-like interactions. I'm deeply grateful to the developers of [`mlx`](https://github.com/ml-explore/mlx) and [`mlx-examples`]([url](https://github.com/ml-explore/mlx-examples/tree/main/llms/mlx_lm). 
-
-Following illustration showing the difference in prompts with and without KV Cache
-
-### [Difference in Text Generation Speed With and Without KV Cache]
-I've created a video demonstrating how much the generation speed differs with and without KV Cache using `mlx-community/gemma-2-27b-it-8bit`.
-1. Load a large article (this one)
-2. In the next turn, request to "summarize the article"
-3. Measure the time difference until the summary output begins
+  KV Cache has been implemented in [`mlx-lm`](https://github.com/ml-explore/mlx-lm/). I'm deeply grateful to the developers of [`mlx`](https://github.com/ml-explore/mlx) and [`mlx-lm`](https://github.com/ml-explore/mlx-lm). 
 
 
-### [Measurement Results]
-| | Without KV Cache | With KV Cache |
-----|----|----
-| |  https://github.com/user-attachments/assets/7fe31aa4-7f32-4c23-b11c-ede3acc152f5 | https://github.com/user-attachments/assets/221eebcb-c595-43b2-ba77-226a94e48f0f |
-|1st turn| prompt_tokens: 4487, prompt_eval_time: 14.320998374954797 sec | **prompt_tokens: 4487, prompt_eval_time: 13.99744424992241 sec** |
-|2nd turn| prompt_tokens: 4503, prompt_eval_time: 14.016152999945916 sec | **prompt_tokens: 14, prompt_eval_time: 0.8610775420675054 sec** |
+KV Cache accelerates chat interactions by reusing intermediate states from previous messages. The cache is **implicitly tied to the chat message history** and requires no external session IDs. Here's the precise workflow:
 
-In the first turn, there's no difference as KV Cache isn't available, but in the second turn, due to the effectiveness of KV Cache, there's a significant difference in prompt eval token count, resulting in 17.5 times faster response.
+## Core Workflow
+When use_kv_cache=True in a /v1/chat/completions request:
 
-## [Note]
-Outputs may not be identical when using KV Cache compared to not using it (even if temperature = 0).
+1. **Cache Search**:
+  - The server scans the reverse of the provided messages list to find the latest message with a cached state.
+  - For each message in reverse order (from newest to oldest):
+    - Check if a cache file exists (e.g., {message_id}.safetensors).
+  - If found, the cache is loaded, and only the new messages after this point are processed.
+
+2. **Generation**:
+  - Uses the loaded cache to skip re-processing older messages.
+  - Only the new input message is added to the prompt.
+
+3. **Cache Storage**:
+  - After generation, a new cache is created using the latest message's message_id as the filename.
+
+## Prerequisites
+* Model Format: Only MLX models support KV Cache.
+* API Endpoint: Use /v1/chat/completions with the `use_kv_cache` parameter.
 
 
+## [Example Workflow]
+### Step 1: Initial Request (No Cache)
 
-Below, I explain how to use KV Cache in mlx_gguf_server.
+* **Request**:
+  ```
+  curl -X POST -H "Content-Type: application/json" \
+  -H "X-Model-Id: 0" \
+  -d '{
+      "messages": [
+          {"role": "user", "content": "Hello! I read the book 'Harry Potter and the Prisoner of Azkaban' today.", "message_id": "msg_1_uuid"}
+      ],
+      "use_kv_cache": true,
+      "temperature": 0.7
+  }' \
+  http://localhost:4000/v1/chat/completions
+  ```
 
-## [Prerequisites]
-* The target model should be in MLX format
-* The API Endpoint should be `/v1/chat/completions`
-* The POST request should include `kv_cache_session_id: number`
-These are the conditions.
+* **Internal Processing**:
+  1. Scan KV cache file from bottom of messages list (reverse scan) by using "message_id". In this case, `msg_1_uuid.safetensors` is looking for, but the file doesn't find.
+  2. Then eval all messages as a prompt and generates text.
 
-## [Operation]
-For accesses meeting the above prerequisites, the following occurs during text generation:
-1.  Determine if a cache already exists
-  + Internally, KV Cache is managed using the number set in "kv_cache_session_id" as an identifier.
-2. If no cache is found, generate text normally by including all chat messages in the prompt. Simultaneously, generate a KV Cache with the specified kv_cache_session_id and save it in memory.
-3. If a cache is found in step 1, use that cache. In this case, the prompt for text generation only uses the latest input from the user, i.e., the end of the messages.
 
-## [Managing KV Cache]
-The following API endpoints can be used to check and delete KV Cache:
+* **Response**:
+  ```
+  {
+    "choices": [{"message": {"content": "Hi there! That's great. Was it fun?", "message_id": "msg_2_uuid"}}],
+    "usage": ...
+  }
+  ```
 
-* /v1/internal/model/kv_cache/info
-  + Method: GET
-  + Responds with the current KV Cache ID of the target model and its capacity (Bytes), but currently, the capacity is (probably) not the correct value.
+* **Cache Action**:
+  - A new cache file `msg_2_uuid.safetensors` is stored in `llm_process/kv_cache` directory.
 
-* /v1/internal/model/kv_cache/remove_cache
-  + Method: POST
-  + POST parameter: {session_id: Session ID (number)}
-  + Deletes the KV Cache specified by session_id. As it's specified by session_id, only one KV Cache can be deleted at a time.
+### Step 2: Subsequent Request (With Cache)
 
-* /v1/internal/model/kv_cache/remove_old_caches
-  + Method: POST
-  + POST parameter: {seconds: Number of seconds (number)}
-  + Deletes multiple KV Caches at once whose last update time is older than the specified number of seconds from the current time.
+* **Request**:
+  ```
+  curl -X POST -H "Content-Type: application/json" \
+  -H "X-Model-Id: 0" \
+  -d '{
+      "messages": [
+          {"role": "user", "content": "Hello! I read the book 'Harry Potter and the Prisoner of Azkaban' today.", "message_id": "msg_1_uuid"},
+          {"role": "assistant", "content": "That's great. Was it fun?", "message_id": "msg_2_uuid"},
+          {"role": "user", "content": "Which of the characters is your favourite?", "message_id": "msg_3_uuid"}
+      ],
+      "use_kv_cache": true,
+      "temperature": 0.7
+  }' \
+  http://localhost:4000/v1/chat/completions
+  ```
+
+* **Internal Processing**:
+  1. Scan KV cache file from bottom of messages list (reverse scan) by using "message_id". In this case, `msg_2_uuid.safetensors` will be found.
+  2. Then cut messages list at the found message line and above. In this acse, the new messages list only include single line (`{"role": "user", "content": "Which of the characters is your favourite?", "message_id": "msg_3"}`).
+  3. KV cache file `msg2_uuid.safetensors` is loaded and evaluate prompt "Which of the characters is your favourite?". Then text will be generated.
+
+* **Response**:
+  ```
+  {
+    "choices": [{"message": {"content": "That's a great question! It's tough to choose just one ... but I'd say Remus Lupin. ", "message_id": "msg_4_uuid"}}],
+    "usage": ...
+  }
+  ```
+
+* **Cache Action**:
+  + A new cache file `msg_4_uuid.safetensors` is stored in `llm_process/kv_cache` directory.
+
+## Notes
+
+1. **Message IDs**:
+  - Messages must have message_id fields (UUIDs or unique strings) for cache lookup.
+
+2. **Storage Limits**:
+  - Caches are auto-deleted when exceeding MAX_KV_SIZE_GB (default: 10GB).
+  - Oldest caches are removed first.
+
