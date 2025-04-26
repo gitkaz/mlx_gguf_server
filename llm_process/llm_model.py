@@ -7,7 +7,7 @@ import time
 import uuid
 from llama_cpp import Llama
 from typing import Generator, List
-from mlx_lm.utils import stream_generate
+from mlx_lm.generate import stream_generate
 from mlx_lm.sample_utils import make_logits_processors, make_sampler
 
 from .kv_cache_manager import load_kv_cache, save_kv_cache, clean_kv_cache
