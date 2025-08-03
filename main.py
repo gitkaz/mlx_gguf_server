@@ -19,7 +19,7 @@ from llm_process.llm_process import start_llm_process
 import tts.kokoro_tts.run_process
 import embedding.run_process
 
-from core.llm_process import LLMProcess
+from core.process_manager import LLMProcess
 from schemas import CompletionParams, TokenCountParams, ModelLoadParams, ProcessCleanParams, CacheLimitParams, KokoroTtsParams, EmbeddingsParams
 from embedding.embedding_schemas import OpenAICompatibleEmbeddings
 from utils.utils import create_model_list
