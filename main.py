@@ -24,14 +24,43 @@ from embedding.embedding_schemas import OpenAICompatibleEmbeddings
 from utils.utils import create_model_list
 from utils.kv_cache_utils import prepare_temp_dir, validate_session_id, validate_filename, process_upload_file
 from whisper_stt.whisper import AudioTranscriber
-from logging import getLogger
+# from logging import getLogger
+import logging
 
-logger = getLogger("uvicorn")
-
+logger = logging.getLogger("uvicorn")
+logging.basicConfig(level=logging.INFO)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("starting....")
+
+    # ===== ログディレクトリの作成とロガー設定 =====
+    os.makedirs("logs", exist_ok=True)
+
+    # アクセスログ専用ロガーの設定
+    access_logger = logging.getLogger("access")
+    access_logger.setLevel(logging.INFO)
+
+    # JSONフォーマッタの定義（別途定義が必要な場合はここに記述）
+    class JsonFormatter(logging.Formatter):
+        def format(self, record):
+            log_data = {
+                "time": self.formatTime(record, "%Y-%m-%d %H:%M:%S"),
+                "ip": getattr(record, 'ip', ''),
+                "method": getattr(record, 'method', ''),
+                "path": getattr(record, 'path', ''),
+                "status": getattr(record, 'status', ''),
+                "req_size": getattr(record, 'req_size', 0),
+                "duration_ms": int(getattr(record, 'duration', 0) * 1000),
+                "params": getattr(record, 'params', {})
+            }
+            return json.dumps(log_data, ensure_ascii=False)
+
+    # ファイルハンドラーの設定
+    file_handler = logging.FileHandler("logs/access.log")
+    file_handler.setFormatter(JsonFormatter())
+    access_logger.addHandler(file_handler)
+    # =====================================================
 
     app.state.tmpdir = "temp"
     app.state.models = create_model_list()
@@ -53,6 +82,44 @@ def recurring_task_cleanup():
     logger.debug("Under Construction...")
     pass
 
+@app.middleware("http")
+async def access_logger(request: Request, call_next):
+    # リクエスト情報収集
+    start_time = time.time()
+    body = await request.body()
+    request._body = body  # 再利用可能に
+
+    # 処理実行
+    response = await call_next(request)
+
+    # ログ出力
+    duration = time.time() - start_time
+
+    # パラメータを安全に収集（messages 除外）
+    try:
+        body_json = json.loads(body)
+        # messages フィールドを完全削除（[REDACTED] よりも安全）
+        if "messages" in body_json:
+            body_json["messages"] = "[REDACTED]"
+        elif "prompt" in body_json:
+            body_json["prompt"] = "[REDACTED]"
+        # 大きすぎる場合は先頭3項目のみ記録
+        safe_params = dict(list(body_json.items())[:3]) if len(body_json) > 3 else body_json
+    except:
+        safe_params = {"raw_body_size": len(body)}
+
+    logger = logging.getLogger("access")
+    logger.info("", extra={
+        "ip": request.client.host,
+        "method": request.method,
+        "path": request.url.path,
+        "status": response.status_code,
+        "req_size": len(body),
+        "duration": duration,
+        "params": safe_params
+    })
+
+    return response
 
 class LLMProcess:
     def __init__(self):
