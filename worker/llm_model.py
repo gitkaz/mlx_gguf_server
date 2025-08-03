@@ -10,6 +10,7 @@ from typing import Generator, List, Dict, Any
 from mlx_lm.generate import stream_generate
 from mlx_lm.sample_utils import make_logits_processors, make_sampler
 
+from .model_loader import ModelLoader
 from .kv_cache_manager import load_kv_cache, save_kv_cache, clean_kv_cache
 from .task_response import TaskResponse
 from .logger_config import setup_logger
@@ -49,6 +50,7 @@ class LLMModel:
         self.model = None
         self.tokenizer = None
         self.default_gen_params: Dict[str, Any] = {}
+        self.model_loader = ModelLoader()
 
     def load_model(self, params) -> TaskResponse:
         request_model_path = params.llm_model_path
@@ -56,18 +58,16 @@ class LLMModel:
         logger.debug(f"start loading model: {request_model_path}.")
         start_time = time.time()
         try:
-            if os.path.isfile(request_model_path):
-                self.model_type = "llama-cpp"
-                self.model = Llama(model_path=request_model_path, n_gpu_layers=-1, n_ctx=0, chat_format=chat_format, verbose=True)
-                context_length = self.model.n_ctx()
-            else:
-                self.model_type = "mlx"
+            loaded_model = self.model_loader.load(request_model_path, chat_format)
 
-                tokenizer_config = {"trust_remote_code": None}
+            self.model = loaded_model["model"]
+            self.tokenizer = loaded_model["tokenizer"]
+            self.model_type = loaded_model["type"]
+            self.model_path = loaded_model["path"]
+            self.model_name = os.path.basename(self.model_path)
 
-                self.model, self.tokenizer = mlx_lm.load(request_model_path, tokenizer_config=tokenizer_config)
-                self.tokenizer.model_max_length
-                context_length = self.get_max_position_embeddings(request_model_path)
+            context_length  = loaded_model["context_length"]
+
         except Exception as e:
             logger.error(str(e))
             error_messsage = f"load failed: {request_model_path}. Reason={str(e)}"
@@ -153,22 +153,6 @@ class LLMModel:
         logger.debug(f"mx.metal.get_cache_memory()={mx.metal.get_cache_memory()}")
         mx.metal.clear_cache()
         logger.debug(f"mx.metal.get_cache_memory()={mx.metal.get_cache_memory()}")
-
-    def get_max_position_embeddings(self, model_path):
-        with open(f"{model_path}/config.json", "r") as f:
-            config = json.load(f)
-            if config.get("rope_scaling") and \
-               config["rope_scaling"].get("factor") and \
-               config["rope_scaling"].get("original_max_position_embeddings"):
-                factor = config["rope_scaling"].get("factor")
-                original_max_position_embeddings = config["rope_scaling"].get("original_max_position_embeddings")
-                max_position_embeddings = int(factor * original_max_position_embeddings)
-                
-            elif config.get("text_config"):
-                max_position_embeddings = config["text_config"].get("max_position_embeddings")
-            else:
-                max_position_embeddings = config.get("max_position_embeddings")
-            return max_position_embeddings
 
     def token_count(self, params) -> TaskResponse:
         try:
