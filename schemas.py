@@ -6,19 +6,19 @@ class CompletionParams(BaseModel):
     model: str = "dummy"
     prompt: str = ""
     messages: List[Dict] = []
-    max_tokens: int = 4096
-    temperature: float = 0.8
-    seed: int = None
+    max_tokens: Optional[int] = None
+    temperature: Optional[float] = None
+    seed: Optional[int] = None
     stream: bool = False
     apply_chat_template: bool = False
     complete_text: bool = False
-    top_p:float = 1.0
-    stop:list = []
+    top_p: Optional[float] = None
+    stop: Optional[list] = []
     logit_bias: Optional[Dict[int, float]] = None # mlx only
-    repetition_penalty: float = None    # mlx only
-    repetition_context_size: int = 20   # mlx only
+    repetition_penalty: Optional[float] = None    # mlx only
+    repetition_context_size: Optional[int] = 20   # mlx only
     use_kv_cache: bool = False          # mlx only
-    tools: list = None                  # mlx only
+    tools: Optional[list] = None        # mlx only
     top_k: int = 0                      # llama-cpp only
     min_p: float = 0.05                 # llama-cpp only
     typical_p: float = 1.0              # llama-cpp only
@@ -59,6 +59,12 @@ class ModelLoadParams(BaseModel):
     llm_model_name: str
     llm_model_path: str = Field(default="", exclude=True)
     chat_format: str = None # llama-cpp only
+    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
+    logit_bias: Optional[Dict[int, float]] = None
+    repetition_penalty: Optional[float] = None
+    repetition_context_size: Optional[int] = None
+    top_p: Optional[float] = None
 
 class ProcessCleanParams(BaseModel):
     timeout: int

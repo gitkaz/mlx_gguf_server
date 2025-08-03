@@ -6,7 +6,7 @@ import os
 import time
 import uuid
 from llama_cpp import Llama
-from typing import Generator, List
+from typing import Generator, List, Dict, Any
 from mlx_lm.generate import stream_generate
 from mlx_lm.sample_utils import make_logits_processors, make_sampler
 
@@ -19,24 +19,6 @@ logger = setup_logger(__name__, level=log_level)
 
 import gc
 
-
-def get_mlx_extension_params(params) -> dict:
-    return {
-        'stop'          : getattr(params, 'stop', []),
-        'use_kv_cache'  : getattr(params, 'use_kv_cache', False),
-    }
-
-
-def get_mlx_params(params) -> dict:
-    return {
-        'temperature'             : getattr(params, 'temperature', 1.0),
-        'max_tokens'              : getattr(params, 'max_tokens', 4096),
-        'logit_bias'              : getattr(params, 'logit_bias', None),
-        'repetition_penalty'      : getattr(params, 'repetition_penalty', None),
-        'repetition_context_size' : getattr(params, 'repetition_context_size', 20),
-        'top_p'                   : getattr(params, 'top_p', 1.0),
-        'tools'                   : getattr(params, 'tools', None),
-    }
 
 def get_llama_cpp_params(params) -> dict:
     return {
@@ -66,6 +48,7 @@ class LLMModel:
         self.model_cache_limit: int = 0
         self.model = None
         self.tokenizer = None
+        self.default_gen_params: Dict[str, Any] = {}
 
     def load_model(self, params) -> TaskResponse:
         request_model_path = params.llm_model_path
@@ -90,6 +73,14 @@ class LLMModel:
             error_messsage = f"load failed: {request_model_path}. Reason={str(e)}"
             return TaskResponse.create(500, error_messsage)
 
+        self.default_gen_params = {}
+        for param_name in ["temperature", "max_tokens", "logit_bias", 
+                          "repetition_penalty", "repetition_context_size", "top_p"]:
+            value = getattr(params, param_name, None)
+            if value is not None:  # Noneでなければ保存
+                self.default_gen_params[param_name] = value
+
+
         load_time = time.time() - start_time
         self.model_path = request_model_path
         self.model_name = os.path.basename(request_model_path)
@@ -99,10 +90,43 @@ class LLMModel:
                       "model_path":self.model_path, 
                       "model_type": self.model_type, 
                       "context_length": context_length, 
+                      "defalt_params": self.default_gen_params,
                       "load_time":load_time
                       }
         logger.debug(f"{model_info=}")
         return TaskResponse.create(200, model_info)
+
+    def get_mlx_params(self, params) -> dict:
+        fallback_defaults = {
+            'temperature': 1.0,
+            'max_tokens': 4096,
+            'logit_bias': None,
+            'repetition_penalty': None,
+            'repetition_context_size': 20,
+            'top_p': 1.0,
+            'tools': None,
+        }
+
+        # 1. モデルに設定されたカスタムデフォルト値
+        result = self.default_gen_params.copy()
+        # 2. カスタムデフォルトにない項目はフォールバック値で補完
+        for k, v in fallback_defaults.items():
+            if k not in result:
+                result[k] = v
+        # 3. リクエストパラメータで上書き（Noneでなければ）
+        for k in result.keys():
+            param_value = getattr(params, k, None)
+            if param_value is not None:  # クライアントが明示的に送った値のみ採用
+                result[k] = param_value
+
+        return result
+
+    def get_mlx_extension_params(self, params) -> dict:
+        return {
+            'stop'          : getattr(params, 'stop', []),
+            'use_kv_cache'  : getattr(params, 'use_kv_cache', False),
+        }
+
 
     def set_cache_liimt(self, params) -> TaskResponse:
         limit = int(params.cache_limit)
@@ -167,7 +191,13 @@ class LLMModel:
             return TaskResponse(500, e)
 
     def completions_stream(self, params) -> Generator[TaskResponse, None, None]:
-        mlx_llama_generate = MLX_LLAMA_Generate(self.model, self.tokenizer, self.model_type, self.model_name)
+        mlx_llama_generate = MLX_LLAMA_Generate(
+            self.model, 
+            self.tokenizer, 
+            self.model_type, 
+            self.model_name, 
+            self.default_gen_params
+        )
 
         logger.debug("start completions_stream")
 
@@ -209,14 +239,14 @@ class LLMModel:
 
 
 class MLX_LLAMA_Generate(LLMModel):
-    def __init__(self, model, tokenizer, model_type, model_name):
-        super().__init__()
+    def __init__(self, model, tokenizer, model_type, model_name, parent_default_params: Dict[str, Any]):
+        # super().__init__()
 
         self.model = model
         self.tokenizer = tokenizer
         self.model_type = model_type
         self.model_name = model_name
-
+        self.default_gen_params = parent_default_params.copy()
 
     def generate_completion(self, params) -> Generator[dict, None, None]:
         def exception_message_in_generate(e: Exception, model_type: str) -> dict:
@@ -256,11 +286,13 @@ class MLX_LLAMA_Generate(LLMModel):
             return False
 
         if self.model_type == 'mlx':
-            mlx_params = get_mlx_params(params)
-            mlx_ext_params = get_mlx_extension_params(params)
-            sampler = make_sampler(params.temperature, top_p=params.top_p)
+            mlx_params = self.get_mlx_params(params)
+            mlx_ext_params = self.get_mlx_extension_params(params)
+            sampler = make_sampler(mlx_params["temperature"], top_p=mlx_params["top_p"])
             logits_processors = make_logits_processors(
-                params.logit_bias, params.repetition_penalty, params.repetition_context_size
+                mlx_params["logit_bias"],
+                mlx_params["repetition_penalty"], 
+                mlx_params["repetition_context_size"]
             )
 
             request_id = str(uuid.uuid4())
