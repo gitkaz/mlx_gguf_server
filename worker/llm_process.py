@@ -1,10 +1,14 @@
 from typing import Union, Any
 from multiprocessing import Queue, Manager
 import os
-from .llm_model import LLMModel
-from .task_response import TaskResponse
-from .logger_config import setup_logger
 
+from .task_response import TaskResponse
+from .llm_model import LLMModel
+from .model_loader import ModelLoader
+from .tokenizer_service import TokenizerService
+from .generation_service import GenerationService
+
+from .logger_config import setup_logger
 log_level = os.environ.get("LOG_LEVEL", "INFO")
 logger = setup_logger(__name__, level=log_level)
 
@@ -21,19 +25,28 @@ async def start_llm_process(request_queue: Queue, response_queue: Queue):
         else:
             task, request_id, params = item
             logger.debug(f"debug: new request: {task=}, {request_id=}, {params=}")
+        try:
+            if task == 'load':
+                loader = ModelLoader()
+                result = loader.load(model, params)
 
-        if task == 'load':
-            result = model.load_model(params)
-        elif task == 'token-count':
-            result = model.token_count(params)
-        elif task == 'completions_stream':
-            for result in model.completions_stream(params):
-                assert_task_response(result)
-                # logger.debug(f"completions_stream_result: {result.message=}")
-                response_queue.put(( request_id, result.to_json() ))
-            continue
-        assert_task_response(result)
-        response_queue.put(( request_id, result.to_json() ))
+            elif task == 'token-count':
+                tokenizer_service = TokenizerService()
+                result = tokenizer_service.count_tokens(model, params)
+
+            elif task == 'completions_stream':
+                generator = GenerationService()
+                for response in generator.generate_completion(model, params):
+                    task_response = TaskResponse.create(200, response)
+                    response_queue.put((request_id, task_response.to_json()))
+                continue  # ストリーミングのためcontinue
+
+            assert_task_response(result)
+            response_queue.put((request_id, result.to_json()))
+
+        except Exception as e:
+            error_response = TaskResponse.create(500, {"error": str(e)})
+            response_queue.put((request_id, error_response.to_json()))
 
 
 def assert_task_response(result: Union[TaskResponse, Any]):
