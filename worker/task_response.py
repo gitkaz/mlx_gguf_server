@@ -21,6 +21,9 @@ class TaskResponse:
     def to_json(self):
         return json.dumps({"status": self.status, "message": self.message})
 
+    def to_dict(self):
+        return {"status": self.status, "message": self.message}
+
     @classmethod
     def create(cls, status, message):
         return cls(status, message)

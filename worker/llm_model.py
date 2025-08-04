@@ -12,6 +12,7 @@ from mlx_lm.sample_utils import make_logits_processors, make_sampler
 
 from .model_loader import ModelLoader
 from .tokenizer_service import TokenizerService
+from .generation_service import GenerationService
 from .kv_cache_manager import load_kv_cache, save_kv_cache, clean_kv_cache
 from .task_response import TaskResponse
 from .logger_config import setup_logger
@@ -52,7 +53,8 @@ class LLMModel:
         self.tokenizer = None
         self.default_gen_params: Dict[str, Any] = {}
         self.model_loader = ModelLoader()
-        self.tokenizer_service = TokenizerService() 
+        self.tokenizer_service = TokenizerService()
+        self.generator = GenerationService(self.tokenizer_service)
 
     def load_model(self, params) -> TaskResponse:
         request_model_path = params.llm_model_path
@@ -170,34 +172,18 @@ class LLMModel:
             return TaskResponse(500, str(e))
 
     def completions_stream(self, params) -> Generator[TaskResponse, None, None]:
-        mlx_llama_generate = MLX_LLAMA_Generate(
-            self.model, 
-            self.tokenizer, 
-            self.model_type, 
-            self.model_name, 
-            self.default_gen_params,
-            self.tokenizer_service
-        )
-
-        logger.debug("start completions_stream")
-
-        for response in mlx_llama_generate.generate_completion(params):
-
-            if not isinstance(response, dict):
-                error_message = f"error: generate_completion: response is not dict. {response=}"
-                logger.error(error_message)
-                response = error_message
-                status = 500
-            elif response.get("error"):
-                status = 500
-            else:
-                status = 200
-            yield TaskResponse.create(status, response)
-
-        # logger.debug("completions_stream: Garbage Collect.")
-        # del mlx_llama_generate 
-        # gc.collect()
-   
+        try:
+            for response in self.generator.generate_completion(
+                model=self.model,
+                tokenizer=self.tokenizer,
+                model_type=self.model_type,
+                model_name=self.model_name,
+                default_gen_params=self.default_gen_params,
+                params=params
+            ):
+                yield TaskResponse.create(200, response)
+        except Exception as e:
+            yield TaskResponse.create(500, {"error": str(e)})
 
 def apply_chat_template(self, messages: List[dict], tools=None) -> str:
     try:
@@ -210,230 +196,3 @@ def apply_chat_template(self, messages: List[dict], tools=None) -> str:
         )
     except Exception as e:
         raise RuntimeError(f"Chat template failed: {str(e)}")
-
-
-class MLX_LLAMA_Generate(LLMModel):
-    def __init__(self, model, tokenizer, model_type, model_name, parent_default_params: Dict[str, Any], tokenizer_service: TokenizerService):
-
-        self.model = model
-        self.tokenizer = tokenizer
-        self.model_type = model_type
-        self.model_name = model_name
-        self.default_gen_params = parent_default_params.copy()
-        self.tokenizer_service = tokenizer_service
-
-    def generate_completion(self, params) -> Generator[dict, None, None]:
-        def exception_message_in_generate(e: Exception, model_type: str) -> dict:
-            error_message = f"Error in {model_type} generate_completion: {str(e)}"
-            logger.error(error_message)
-            response = {"error": error_message}
-            return response
-
-        def calculate_mlx_usage(self, prompt:str, all_tokens:List, perf_timer:List = []) -> dict:
-            prompt_tokens = len(self.tokenizer.encode(prompt))
-            completion_tokens = len(all_tokens)
-            total_tokens = prompt_tokens + completion_tokens
-            if len(perf_timer) == 3:
-                prompt_eval_time = perf_timer[1] - perf_timer[0]
-                generation_time  = perf_timer[2] - perf_timer[1]
-            else:
-                prompt_eval_time = "not measured"
-                generation_time  = "not measured"
-
-            usage = {}
-            usage = {"prompt_tokens": prompt_tokens, 
-                     "completion_tokens":completion_tokens, 
-                     "total_tokens": total_tokens,
-                     "prompt_eval_time": prompt_eval_time,
-                     "generation_time" : generation_time
-                    }
-            return usage
-
-        def check_stop_keywords(stop: List, tokens: List):
-            stop_sequence_matched: bool = False
-            if stop:
-                for stop_sequence in stop:
-                    text = self.tokenizer.decode(tokens)
-                    if text.endswith(stop_sequence):
-                        logger.debug(f"stop keywords found. kewords={stop_sequence}")
-                        return True
-            return False
-
-        if self.model_type == 'mlx':
-            mlx_params = self.get_mlx_params(params)
-            mlx_ext_params = self.get_mlx_extension_params(params)
-            sampler = make_sampler(mlx_params["temperature"], top_p=mlx_params["top_p"])
-            logits_processors = make_logits_processors(
-                mlx_params["logit_bias"],
-                mlx_params["repetition_penalty"], 
-                mlx_params["repetition_context_size"]
-            )
-
-            request_id = str(uuid.uuid4())
-            created_time = int(time.time())
-            all_tokens = []
-            kv_cache = None
-            logger.debug(f"{mlx_params=}")
-
-            if params.apply_chat_template:
-                messages = params.messages
-
-                # kv cache の生成
-                if mlx_ext_params["use_kv_cache"]:
-                    kv_cache, kv_cache_metadata, index, kv_load_stats = load_kv_cache(self.model, messages)
-                    params.prompt = self.tokenizer_service.apply_chat_template(tokenizer=self.tokenizer, messages=messages[index:], tools=mlx_params["tools"])
-                else:
-                    params.prompt = self.tokenizer_service.apply_chat_template(tokenizer=self.tokenizer, messages=messages, tools=mlx_params["tools"])
-                logger.debug(f"Chat Template applied {params.prompt=}")
-
-            start_time = time.perf_counter()
-            is_first_token = True
-
-            try:
-                for item in stream_generate(
-                    model=self.model, 
-                    tokenizer=self.tokenizer,
-                    prompt=params.prompt,
-                    max_tokens=params.max_tokens,
-                    prompt_cache=kv_cache,
-                    sampler = sampler,
-                    logits_processors = logits_processors,
-                    ):
-                    text = item.text
-                    tokens = item.token
-                    all_tokens.append(tokens)
-
-                    if check_stop_keywords(params.stop, all_tokens) is True:
-                        del all_tokens[-1]
-                        break
-
-                    if params.apply_chat_template:
-                        if params.stream:
-                            response = {"id": request_id,
-                                        "object": "chat.completion.chunk", 
-                                        "created": created_time, 
-                                        "model": self.model_name, 
-                                        "choices": [{"delta": {"content": text}}]
-                                        }
-                        else:
-                            continue
-                    else:
-                        if params.stream:
-                            response = {"id": request_id, 
-                                        "object": "text_completion", 
-                                        "created": created_time, 
-                                        "model": self.model_name, 
-                                        "choices": [{"text": text}]
-                                        }
-                        else:
-                            continue
-                    if is_first_token:
-                        prompt_eval_time = time.perf_counter()
-                        is_first_token = False
-                    yield response
-
-                if not params.stream:
-                    if params.apply_chat_template:
-                        text = self.tokenizer.decode(all_tokens)
-                        response = {"id": request_id, 
-                                    "object": "chat.completion", 
-                                    "created": created_time, 
-                                    "model": self.model_name, 
-                                    "choices": [{"message": { "content": text}}]
-                                    }
-                        response["usage"] = calculate_mlx_usage(self, params.prompt, all_tokens)
-                        yield response
-                    else:
-                        text = self.tokenizer.decode(all_tokens)
-                        response = {"id": request_id, 
-                                    "object": "text_completion", 
-                                    "created": created_time, 
-                                    "model": self.model_name, 
-                                    "choices": [{"text": text}]
-                                    }
-                        response["usage"] = calculate_mlx_usage(self, params.prompt, all_tokens)
-                        yield response
-
-                if params.complete_text:
-                    complete_text = self.tokenizer.decode(all_tokens)
-                else:
-                    complete_text = ""
-
-                generate_time = time.perf_counter()
-                perf_timer = [start_time, prompt_eval_time, generate_time]
-                response = {"id": request_id, 
-                            "object": "text_completion", 
-                            "created": created_time, 
-                            "model": self.model_name, 
-                            "choices": [{"text": "", "complete_text": complete_text}]
-                            }
-                response["usage"] = calculate_mlx_usage(self, params.prompt, all_tokens, perf_timer)
-                if kv_cache:
-                    response["usage"]["kv_cache"] = {}
-                    cached_token_count = int(response["usage"]["total_tokens"]) + int(kv_cache_metadata["token_count"])
-                    kv_cache_metadata["model_name"]    = str(self.model_name)
-                    kv_cache_metadata["chat_template"] = str(self.tokenizer.chat_template)
-                    kv_cache_metadata["token_count"]   = str(cached_token_count)
-                    save_kv_cache(message_id=request_id, kv_cache=kv_cache, metadata=kv_cache_metadata)
-                    response["usage"]["kv_cache"]["cached_tokens"] = kv_cache_metadata["token_count"]
-                    response["usage"]["kv_cache"]["stats"] = kv_load_stats
-                yield response
-    
-            except Exception as e:
-                logger.error(f"Error in generate_completion: {str(e)}, text: {text}, tokens: {tokens}")
-                yield exception_message_in_generate(e, self.model_type)
-
-        elif self.model_type == 'llama-cpp':
-            llama_cpp_params = get_llama_cpp_params(params)
-            logger.debug(f"{llama_cpp_params=}")
-            try:
-                if params.apply_chat_template:
-                    if params.stream:
-                        all_decoded_tokens = []
-                        for response in self.model.create_chat_completion(
-                            messages=params.messages,
-                            **llama_cpp_params
-                            ):
-                            all_decoded_tokens.append(response["choices"][0]["delta"].get("content"))
-                            yield response
-                    else:
-                        response = self.model.create_chat_completion(
-                            messages=params.messages,
-                            **llama_cpp_params
-                            )
-                        yield response
-
-                else:
-                    if params.stream:
-                        all_decoded_tokens = []
-                        for response in self.model.create_completion(
-                            prompt=params.prompt,
-                            **llama_cpp_params
-                            ):
-                            all_decoded_tokens.append(response["choices"][0]["text"])
-                            yield response
-                    else:
-                        response = self.model.create_completion(
-                            prompt=params.prompt,
-                            **llama_cpp_params
-                            )
-                        yield response
-
-                if params.complete_text:
-                    all_str_tokens = [token for token in all_decoded_tokens if isinstance(token, str)]
-                    complete_text = "".join(all_str_tokens)
-                    response = {"id": response["id"], 
-                                "object":response["object"], 
-                                "created": response["created"], 
-                                "model": response["model"],
-                                "choices": [{"text": "", "complete_text": complete_text}]
-                                }
-                    response["usage"] = {"prompt_tokens":0, "completion_tokens":len(all_decoded_tokens), "total_tokens": len(all_decoded_tokens)}
-                    yield response
-
-            except Exception as e:
-                yield exception_message_in_generate(e, self.model_type)
-
-        if params.stream:
-            response = {"stream_done": True}
-            yield response
