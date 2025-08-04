@@ -1,38 +1,41 @@
-# worker/generation_service.py
-
 from typing import Generator, Dict, Any, List
 import mlx.core as mx
 import uuid
 import time
 from mlx_lm.sample_utils import make_sampler, make_logits_processors
-from mlx_lm.models.cache import make_prompt_cache, save_prompt_cache
 from transformers import PreTrainedTokenizer
-from mlx_lm.tokenizer_utils import TokenizerWrapper
+
 from .kv_cache_manager import load_kv_cache, save_kv_cache
 from .tokenizer_service import TokenizerService
+from .llm_model import LLMModel
+
 from .task_response import TaskResponse
 
 class GenerationService:
     """
-    LLMのテキスト生成（completions_stream）を専門に行うサービス。
+    LLMのテキスト生成 (completions_stream) を専門に行うサービス。
     LLMModelから委譲されて、生成処理を実行する。
     """
 
-    def __init__(self, tokenizer_service: TokenizerService):
-        self.tokenizer_service = tokenizer_service
+    def __init__(self):
+        self.tokenizer_service = TokenizerService()
 
-    def generate_completion(
-        self,
-        model: Any,
-        tokenizer: PreTrainedTokenizer,
-        model_type: str,
-        model_name: str,
-        default_gen_params: Dict[str, Any],
-        params: Any
-    ) -> Generator[Dict[str, Any], None, None]:
+    def generate_completion(self, llm_model: LLMModel, params :Any) -> Generator[Dict[str, Any], None, None]:
         """
         テキスト生成を実行。stream対応。
         """
+
+        if not isinstance(llm_model, LLMModel):
+            raise TypeError("First argument must be LLMModel instance")
+
+        model = llm_model.model
+        tokenizer = llm_model.tokenizer
+        model_type = llm_model.model_type
+        model_name = llm_model.model_name
+        default_gen_params = llm_model.default_gen_params
+
+
+
         def exception_response(e: Exception, source: str) -> Generator[Dict[str, Any], None, None]:
             error_msg = f"Error in GenerationService.generate_completion ({source}): {str(e)}"
             yield TaskResponse.create(500, {"error": error_msg}).to_dict()
@@ -169,7 +172,25 @@ class GenerationService:
             yield from self._exception_response(e, "mlx")
 
     def _generate_llama_cpp(self, model: Any, params: Any) -> Generator[Dict[str, Any], None, None]:
-        from .llm_model import get_llama_cpp_params
+
+        def get_llama_cpp_params(params) -> dict:
+            return {
+                'temperature'    : getattr(params, 'temperature', 1.0),
+                'max_tokens'     : getattr(params, 'max_tokens', 4096),
+                'stream'         : getattr(params, 'stream', False),
+                'top_p'          : getattr(params, 'top_p', 0.95),
+                'min_p'          : getattr(params, 'min_p', 0.05),
+                'typical_p'      : getattr(params, 'typical_p', 1.0),
+                'stop'           : getattr(params, 'stop', []),
+                'frequency_penalty': getattr(params, 'frequency_penalty', 0.0),
+                'presence_penalty' : getattr(params, 'presence_penalty', 0.0),
+                'repeat_penalty' : getattr(params, 'repeat_penalty', 1.1),
+                'top_k'          : getattr(params, 'top_k', 40),
+                'seed'           : getattr(params, 'seed', None),
+                'mirostat_mode'  : getattr(params, 'mirostat_mode', 2),
+                'mirostat_tau'   : getattr(params, 'mirostat_tau', 5.0),
+                'mirostat_eta'   : getattr(params, 'mirostat_eta', 0.1),
+            }
 
         llama_cpp_params = get_llama_cpp_params(params)
         all_decoded_tokens = []
