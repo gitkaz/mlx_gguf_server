@@ -11,6 +11,7 @@ from mlx_lm.generate import stream_generate
 from mlx_lm.sample_utils import make_logits_processors, make_sampler
 
 from .model_loader import ModelLoader
+from .tokenizer_service import TokenizerService
 from .kv_cache_manager import load_kv_cache, save_kv_cache, clean_kv_cache
 from .task_response import TaskResponse
 from .logger_config import setup_logger
@@ -51,6 +52,7 @@ class LLMModel:
         self.tokenizer = None
         self.default_gen_params: Dict[str, Any] = {}
         self.model_loader = ModelLoader()
+        self.tokenizer_service = TokenizerService() 
 
     def load_model(self, params) -> TaskResponse:
         request_model_path = params.llm_model_path
@@ -156,23 +158,16 @@ class LLMModel:
 
     def token_count(self, params) -> TaskResponse:
         try:
-            if self.model_type == 'mlx':
-                if params.messages != []:
-                    tokenized_input = self.tokenizer.apply_chat_template(params.messages, tokenize=True, add_generation_prompt=True)
-                else:
-                    tokenized_input = self.tokenizer.tokenize(params.prompt)
-            elif self.model_type == 'llama-cpp':
-                if params.messages != []:
-                    text = json.dumps(params.messages)                
-                else:
-                    text = params.prompt
-                text = bytes(text, 'utf-8')
-                tokenized_input= self.model.tokenize(text)
-
-            token_length = len(tokenized_input)
+            # TokenizerService に委譲
+            token_length = self.tokenizer_service.count_tokens(
+                model_type=self.model_type,
+                tokenizer=self.tokenizer,
+                prompt=params.prompt,
+                messages=params.messages
+            )
             return TaskResponse(200, token_length)
         except Exception as e:
-            return TaskResponse(500, e)
+            return TaskResponse(500, str(e))
 
     def completions_stream(self, params) -> Generator[TaskResponse, None, None]:
         mlx_llama_generate = MLX_LLAMA_Generate(
@@ -180,7 +175,8 @@ class LLMModel:
             self.tokenizer, 
             self.model_type, 
             self.model_name, 
-            self.default_gen_params
+            self.default_gen_params,
+            self.tokenizer_service
         )
 
         logger.debug("start completions_stream")
@@ -203,34 +199,28 @@ class LLMModel:
         # gc.collect()
    
 
-    def apply_chat_template(self, messages: List[dict], tools=None) -> str:
-        chatml_instruct_template="{%- set ns = namespace(found=false) -%}{%- for message in messages -%}{%- if message['role'] == 'system' -%}{%- set ns.found = true -%}{%- endif -%}{%- endfor -%}{%- for message in messages %}{%- if message['role'] == 'system' -%}{{- '<|im_start|>system\n' + message['content'].rstrip() + '<|im_end|>\n' -}}{%- else -%}{%- if message['role'] == 'user' -%}{{-'<|im_start|>user\n' + message['content'].rstrip() + '<|im_end|>\n'-}}{%- else -%}{{-'<|im_start|>assistant\n' + message['content'] + '<|im_end|>\n' -}}{%- endif -%}{%- endif -%}{%- endfor -%}{%- if add_generation_prompt -%}{{-'<|im_start|>assistant\n'-}}{%- endif -%}"
-
-        try:
-            chat_prompt = self.tokenizer.apply_chat_template(messages, tools=tools, tokenize=False, add_generation_prompt=True)
-            logger.debug(f"{chat_prompt=}")
-        except:
-            logger.warn("apply chat template failed. try default format.")
-            try:
-                self.tokenizer.chat_template = self.tokenizer.default_chat_template
-                chat_prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-                logger.debug(f"{chat_prompt=}")
-            except:
-                logger.warn("apply chat template failed. try fallback format.")
-                chat_prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, chat_template=chatml_instruct_template)
-                logger.debug(f"{chat_prompt=}")
-        return chat_prompt
+def apply_chat_template(self, messages: List[dict], tools=None) -> str:
+    try:
+        # TokenizerService に委譲
+        return self.tokenizer_service.apply_chat_template(
+            tokenizer=self.tokenizer,
+            messages=messages,
+            tools=tools,
+            add_generation_prompt=True
+        )
+    except Exception as e:
+        raise RuntimeError(f"Chat template failed: {str(e)}")
 
 
 class MLX_LLAMA_Generate(LLMModel):
-    def __init__(self, model, tokenizer, model_type, model_name, parent_default_params: Dict[str, Any]):
-        # super().__init__()
+    def __init__(self, model, tokenizer, model_type, model_name, parent_default_params: Dict[str, Any], tokenizer_service: TokenizerService):
 
         self.model = model
         self.tokenizer = tokenizer
         self.model_type = model_type
         self.model_name = model_name
         self.default_gen_params = parent_default_params.copy()
+        self.tokenizer_service = tokenizer_service
 
     def generate_completion(self, params) -> Generator[dict, None, None]:
         def exception_message_in_generate(e: Exception, model_type: str) -> dict:
@@ -291,9 +281,9 @@ class MLX_LLAMA_Generate(LLMModel):
                 # kv cache の生成
                 if mlx_ext_params["use_kv_cache"]:
                     kv_cache, kv_cache_metadata, index, kv_load_stats = load_kv_cache(self.model, messages)
-                    params.prompt = self.apply_chat_template(messages[index:], tools=mlx_params["tools"])
+                    params.prompt = self.tokenizer_service.apply_chat_template(tokenizer=self.tokenizer, messages=messages[index:], tools=mlx_params["tools"])
                 else:
-                    params.prompt = self.apply_chat_template(messages, tools=mlx_params["tools"])
+                    params.prompt = self.tokenizer_service.apply_chat_template(tokenizer=self.tokenizer, messages=messages, tools=mlx_params["tools"])
                 logger.debug(f"Chat Template applied {params.prompt=}")
 
             start_time = time.perf_counter()
