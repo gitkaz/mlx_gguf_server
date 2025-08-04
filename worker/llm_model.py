@@ -131,33 +131,6 @@ class LLMModel:
             'use_kv_cache'  : getattr(params, 'use_kv_cache', False),
         }
 
-
-    def set_cache_liimt(self, params) -> TaskResponse:
-        limit = int(params.cache_limit)
-        try:
-            if limit >= 0:
-                logger.debug(f"set model cache limit {self.model_name=}, limit = {limit}")
-                previous_limit = mx.metal.set_cache_limit(limit)
-                self.model_cache_limit = limit
-                message = f"change cache limit from {previous_limit} to {self.model_cache_limit}"
-                logger.debug(message)
-            return TaskResponse(200, message)
-        except Exception as e:
-            return TaskResponse(500, e)
-
-    def get_cache_memory(self) -> TaskResponse:
-        try:
-            cache_memory_size = mx.metal.get_cache_memory()
-            logger.debug(f"{cache_memory_size=}")
-            return TaskResponse(200, f"{cache_memory_size=}")
-        except Exception as e:
-            return TaskResponse(500, e)
-        
-    def force_metal_clear_cache(self):
-        logger.debug(f"mx.metal.get_cache_memory()={mx.metal.get_cache_memory()}")
-        mx.metal.clear_cache()
-        logger.debug(f"mx.metal.get_cache_memory()={mx.metal.get_cache_memory()}")
-
     def token_count(self, params) -> TaskResponse:
         try:
             # TokenizerService に委譲
