@@ -52,9 +52,6 @@ class TokenCountParams(BaseModel):
             raise ValueError("Only one of 'prompt' or 'messages' should be provided.")
         return self
 
-class CacheLimitParams(BaseModel):
-    cache_limit: int = 0
-
 class ModelLoadParams(BaseModel):
     llm_model_name: str
     llm_model_path: str = Field(default="", exclude=True)

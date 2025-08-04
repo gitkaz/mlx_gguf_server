@@ -19,7 +19,7 @@ import tts.kokoro_tts.run_process
 import embedding.run_process
 
 from core.process_manager import LLMProcess
-from schemas import CompletionParams, TokenCountParams, ModelLoadParams, ProcessCleanParams, CacheLimitParams, KokoroTtsParams, EmbeddingsParams
+from schemas import CompletionParams, TokenCountParams, ModelLoadParams, ProcessCleanParams, KokoroTtsParams, EmbeddingsParams
 from embedding.embedding_schemas import OpenAICompatibleEmbeddings
 from utils.utils import create_model_list
 from utils.kv_cache_utils import prepare_temp_dir, validate_session_id, validate_filename, process_upload_file
@@ -213,33 +213,6 @@ async def get_v1_internal_model_info(model_id: str = Header(default="0", alias="
     model_name = llm_process.model_info["model_name"]
     model_type = llm_process.model_info["model_type"]
     return {"model_name": model_name, "model_type": model_type}
-
-@app.get("/v1/internal/model/cache_memory")
-async def get_cache_memory(model_id: str = Header(default="0", alias="X-Model-Id")):
-    llm_process: LLMProcess = get_llm_process(model_id)
-
-    # create params variable (This is dummy. Just need for task_request arguemnt.)
-    params = CacheLimitParams
-
-    status_code, response = await llm_process.task_request('get_cache_memory', params=params)
-    if status_code == 200:
-        return {'cache_memory_size': response}
-    else: 
-        raise HTTPException(status_code=status_code, detail=response)
-
-@app.post("/v1/internal/model/cache_limit")
-async def post_cache_limit(params: CacheLimitParams, model_id: str = Header(default="0", alias="X-Model-Id")):
-    llm_process: LLMProcess = get_llm_process(model_id)
-
-    if params.cache_limit < 0:
-        raise HTTPException(status_code=400, detail=f"The cache limit size is below the lower limit.")
-
-    status_code, response = await llm_process.task_request('set_cache_liimt', params)
-    if status_code == 200:
-        return {'cache_limit': response}
-    else: 
-        raise HTTPException(status_code=status_code, detail=response)
-
 
 
 @app.get("/v1/internal/model/list")

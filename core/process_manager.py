@@ -9,7 +9,7 @@ import asyncio
 from multiprocessing import Process, Queue, Manager
 
 from worker.llm_process import start_llm_process
-from schemas import CompletionParams, TokenCountParams, ModelLoadParams, ProcessCleanParams, CacheLimitParams, KokoroTtsParams, EmbeddingsParams
+from schemas import CompletionParams, TokenCountParams, ModelLoadParams, ProcessCleanParams, KokoroTtsParams, EmbeddingsParams
 import logging
 
 logger = logging.getLogger("uvicorn")
@@ -37,7 +37,7 @@ class LLMProcess:
         if self.process.is_alive():
             self.process.terminate()
 
-    async def task_request_streaming(self, task: str, params: Union[CompletionParams, TokenCountParams, ModelLoadParams, CacheLimitParams]):
+    async def task_request_streaming(self, task: str, params: Union[CompletionParams, TokenCountParams, ModelLoadParams]):
         request_id = await self.add_request_to_queue(task, params)
         while True:
             try:
@@ -77,7 +77,7 @@ class LLMProcess:
                 self.push_back_result(response_id, response_message_json)
 
 
-    async def add_request_to_queue(self, task: str, params: Union[CompletionParams, TokenCountParams, ModelLoadParams, CacheLimitParams]) -> str:
+    async def add_request_to_queue(self, task: str, params: Union[CompletionParams, TokenCountParams, ModelLoadParams]) -> str:
         request_id = str(uuid.uuid4())
         current_time = time.time()
         await asyncio.get_event_loop().run_in_executor(None, self.request_queue.put, (task, request_id, params))
