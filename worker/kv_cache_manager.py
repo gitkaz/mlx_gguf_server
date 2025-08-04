@@ -5,7 +5,7 @@ from mlx_lm.models.cache import make_prompt_cache, save_prompt_cache, load_promp
 from .logger_config import setup_logger
 logger = setup_logger(__name__, level="DEBUG")
 
-KV_CACHE_DIR = "llm_process/kv_cache"
+KV_CACHE_DIR = "worker/kv_cache"
 
 def load_kv_cache(model, messages: List):
     metadata = {}
