@@ -140,7 +140,7 @@ class GenerationService:
                 response = self._create_final_response(
                     request_id, created_time, model_name, params.apply_chat_template, text
                 )
-                response["usage"] = self._calculate_usage(prompt, all_tokens, start_time, prompt_eval_time)
+                response["usage"] = self._calculate_usage(prompt, all_tokens, tokenizer, start_time, prompt_eval_time)
                 yield response
 
             # complete_textの有無に関わらず、usageを含む応答を返す
@@ -148,7 +148,7 @@ class GenerationService:
             perf_timer = [start_time, prompt_eval_time, generate_time] if 'prompt_eval_time' in locals() else []
 
             response = self._create_usage_response(request_id, created_time, model_name)
-            response["usage"] = self._calculate_usage(prompt, all_tokens, *perf_timer)
+            response["usage"] = self._calculate_usage(prompt, all_tokens, tokenizer, *perf_timer)
 
             # KV Cacheの保存
             if params.use_kv_cache and kv_cache is not None:
@@ -302,8 +302,8 @@ class GenerationService:
             "choices": [{"text": "", "complete_text": ""}]
         }
 
-    def _calculate_usage(self, prompt: str, tokens: List, *perf_timer) -> Dict[str, Any]:
-        prompt_tokens = len(self._encode(prompt))
+    def _calculate_usage(self, prompt: str, tokens: List, tokenizer: PreTrainedTokenizer, *perf_timer) -> Dict[str, Any]:
+        prompt_tokens = len(tokenizer.encode(prompt))
         completion_tokens = len(tokens)
         total_tokens = prompt_tokens + completion_tokens
 
@@ -318,10 +318,6 @@ class GenerationService:
             usage["generation_time"] = perf_timer[2] - perf_timer[1]
 
         return usage
-
-    def _encode(self, text: str) -> List[int]:
-        # tokenizerのラッパーを想定
-        return [1]  # 実際にはtokenizer.encode(text)
 
     def _exception_response(self, e: Exception, source: str) -> Generator[Dict[str, Any], None, None]:
         error_msg = f"Error in GenerationService._generate_{source}: {str(e)}"
