@@ -39,7 +39,7 @@ async def start_llm_process(request_queue: Queue, response_queue: Queue):
                 for response in generator.generate_completion(model, params):
                     task_response = TaskResponse.create(200, response)
                     response_queue.put((request_id, task_response.to_json()))
-                continue  # ストリーミングのためcontinue
+                continue  # 为流式返回继续循环
 
             assert_task_response(result)
             response_queue.put((request_id, result.to_json()))

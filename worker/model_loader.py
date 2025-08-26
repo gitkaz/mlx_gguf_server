@@ -17,14 +17,14 @@ logger = setup_logger(__name__, level=log_level)
 class ModelLoader:
     def load(self, llm_model: LLMModel, params: ModelLoadParams) -> TaskResponse:
         """
-        LLMModelインスタンスを直接操作してモデルをロード
+        直接操作 LLMModel 实例以加载模型
 
-        Args:
-            llm_model: 操作対象のLLMModelインスタンス
-            params: モデルロードパラメータ
+        参数:
+            llm_model: 要操作的 LLMModel 实例
+            params: 模型加载参数
 
-        Returns:
-            TaskResponse: ロード結果
+        返回:
+            TaskResponse: 加载结果
         """
 
         if not isinstance(llm_model, LLMModel):
@@ -35,23 +35,23 @@ class ModelLoader:
         start_time = time.time()
 
         try:
-            # 1. 実際のモデルロード処理
+            # 1. 实际的模型加载处理
             if self._is_gguf_model(request_model_path):
                 loaded_model = self._load_llama_cpp(request_model_path, params.chat_format)
             else:
                 loaded_model = self._load_mlx(request_model_path)
 
-            # 2. LLMModelインスタンスの設定
+            # 2. 设置 LLMModel 实例
             self._configure_llm_model(llm_model, loaded_model, request_model_path)
 
-            # 3. デフォルト生成パラメータの上書き
+            # 3. 覆盖默认的生成参数
             self._set_default_generation_params(llm_model, params)
 
-            # 4. ロード時間の計算とログ
+            # 4. 计算加载时间并记录日志
             load_time = time.time() - start_time
             logger.debug(f"loaded model: {llm_model.model_name}. time: {load_time}s")
 
-            # 5. レスポンス用データの作成
+            # 5. 创建供响应使用的数据
             model_info = self._create_model_info(llm_model, load_time)
 
             return TaskResponse.create(200, model_info)
@@ -60,7 +60,7 @@ class ModelLoader:
             return self._handle_load_error(request_model_path, e)
 
     def _is_gguf_model(self, model_path: str) -> bool:
-        """パスがGGUF形式かどうかを判定"""
+        """判断路径是否为 GGUF 格式"""
         if os.path.isfile(model_path):
             return model_path.lower().endswith(".gguf")
         return False
@@ -84,10 +84,10 @@ class ModelLoader:
         try:
             model = Llama(
                 model_path=model_path,
-                n_gpu_layers=-1,  # Apple Silicon で最適化
-                n_ctx=0,  # n_ctx=0 は自動で最大長を設定
+                n_gpu_layers=-1,  # 针对 Apple Silicon 优化
+                n_ctx=0,  # n_ctx=0 将自动设置为最大上下文长度
                 chat_format=chat_format,
-                verbose=False,  # 詳細ログは別で制御
+                verbose=False,  # 详细日志由其他设置控制
             )
             context_length = model.n_ctx()
 
@@ -102,7 +102,7 @@ class ModelLoader:
             raise RuntimeError(f"Failed to load llama.cpp model: {model_path}") from e
 
     def _configure_llm_model(self, llm_model, loaded_model: Dict[str, Any], model_path: str) -> None:
-        """LLMModelインスタンスの基本プロパティを設定"""
+        """设置 LLMModel 实例的基本属性"""
         llm_model.model = loaded_model["model"]
         llm_model.tokenizer = loaded_model["tokenizer"]
         llm_model.model_type = loaded_model["type"]
@@ -114,7 +114,7 @@ class ModelLoader:
 
 
     def _set_default_generation_params(self, llm_model, params: ModelLoadParams) -> None:
-        """LLMModelにデフォルト生成パラメータを設定"""
+        """为 LLMModel 设置默认生成参数"""
         llm_model.default_gen_params = {}
         relevant_params = [
             "temperature", "max_tokens", "logit_bias",
@@ -129,7 +129,7 @@ class ModelLoader:
         logger.debug(f"Default generation params set: {llm_model.default_gen_params}")
 
     def _create_model_info(self, llm_model, load_time: float) -> Dict[str, Any]:
-        """ロード結果の情報を含む辞書を作成"""
+        """创建包含加载结果信息的字典"""
         model_info = {
             "model_name": llm_model.model_name,
             "model_path": llm_model.model_path,
@@ -143,7 +143,7 @@ class ModelLoader:
         return model_info
 
     def _get_mlx_context_length(self, model_path: str) -> int:
-        """MLXモデルの context_length を config.json から取得"""
+        """从 config.json 获取 MLX 模型的 context_length"""
         config_path = os.path.join(model_path, "config.json")
         try:
             with open(config_path, "r") as f:
@@ -167,11 +167,11 @@ class ModelLoader:
         
 
     def _handle_load_error(self, model_path: str, error: Exception) -> TaskResponse:
-        """ロードエラーを処理"""
+        """处理加载错误"""
         error_message = f"Model load failed for {model_path}: {str(error)}"
         logger.error(error_message, exc_info=True)
 
-        # 特定のエラー型に応じた処理
+    # 针对特定错误类型进行处理
         if isinstance(error, FileNotFoundError):
             return TaskResponse.create(404, "Model file not found")
 

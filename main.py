@@ -34,14 +34,14 @@ logging.basicConfig(level=logging.INFO)
 async def lifespan(app: FastAPI):
     logger.info("starting....")
 
-    # ===== ログディレクトリの作成とロガー設定 =====
+    # ===== 创建日志目录并设置记录器 =====
     os.makedirs("logs", exist_ok=True)
 
-    # アクセスログ専用ロガーの設定
+    # 设置专用的访问日志记录器
     access_logger = logging.getLogger("access")
     access_logger.setLevel(logging.INFO)
 
-    # JSONフォーマッタの定義（別途定義が必要な場合はここに記述）
+    # 定义 JSON 格式化器（如需自定义可在此处修改）
     class JsonFormatter(logging.Formatter):
         def format(self, record):
             log_data = {
@@ -56,7 +56,7 @@ async def lifespan(app: FastAPI):
             }
             return json.dumps(log_data, ensure_ascii=False)
 
-    # ファイルハンドラーの設定
+    # 设置文件处理器
     file_handler = logging.FileHandler("logs/access.log")
     file_handler.setFormatter(JsonFormatter())
     access_logger.addHandler(file_handler)
@@ -84,26 +84,26 @@ def recurring_task_cleanup():
 
 @app.middleware("http")
 async def access_logger(request: Request, call_next):
-    # リクエスト情報収集
+    # 收集请求信息
     start_time = time.time()
     body = await request.body()
-    request._body = body  # 再利用可能に
+    request._body = body  # 可重复使用
 
-    # 処理実行
+    # 执行处理
     response = await call_next(request)
 
-    # ログ出力
+    # 输出日志
     duration = time.time() - start_time
 
-    # パラメータを安全に収集（messages 除外）
+    # 安全收集参数（排除 messages 字段）
     try:
         body_json = json.loads(body)
-        # messages フィールドを完全削除（[REDACTED] よりも安全）
+    # 完全删除 messages 字段（比 [REDACTED] 更安全）
         if "messages" in body_json:
             body_json["messages"] = "[REDACTED]"
         elif "prompt" in body_json:
             body_json["prompt"] = "[REDACTED]"
-        # 大きすぎる場合は先頭3項目のみ記録
+    # 如果参数过大则仅记录前三项
         safe_params = dict(list(body_json.items())[:3]) if len(body_json) > 3 else body_json
     except:
         safe_params = {"raw_body_size": len(body)}
@@ -268,26 +268,26 @@ async def post_kokoro_generate(params: KokoroTtsParams):
         process = Process(target=tts.kokoro_tts.run_process.run, args=(params.model_dump(), queue))
         process.start()
         
-        audio_data = queue.get() # 結果をqueueから取得
+    audio_data = queue.get() # 从队列获取结果
         process.join()
 
         if isinstance(audio_data,str):
           try:
-              # json文字列だった場合はパース
+              # 如果是 json 字符串则解析
             audio_data = json.loads(audio_data)
             if "error" in audio_data:
                   raise HTTPException(status_code=500, detail=f"Error at kokoro-TTS: {audio_data['error']}")
-          except Exception: # jsonじゃない場合はそのまま
+          except Exception: # 不是 json 的情况则原样处理
               pass
 
         if isinstance(audio_data,dict):
             raise HTTPException(status_code=500, detail=f"Error at kokoro-TTS: {audio_data}")
 
-        # バイト列で返す
+    # 以字节序列返回
         logger.debug(f"debug: kokoro response: {audio_data[:100] if isinstance(audio_data, bytes) else str(audio_data)[:100]} ...")
         return Response(
             content=audio_data,
-            media_type="audio/mpeg"  # mp3形式で返す場合
+            media_type="audio/mpeg"  # 如果以 mp3 格式返回
         )
 
     except Exception as e:

@@ -24,7 +24,7 @@ def run(params: dict, queue):
 
         openai_embeddings: List[OpenAICompatibleEmbedding] = []
  
-        # check token lengh
+    # 检查 token 长度
         for i, text in enumerate(texts): 
             tokens = tokenizer.tokenize(text)
             token_length = len(tokens)
@@ -39,7 +39,7 @@ def run(params: dict, queue):
             embeddings = model.encode(texts, task="text-matching", truncate_dim=dimensions)
 
         for embedding in embeddings:
-            # embedding は NumPy 配列なので、float のリストに変換
+            # embedding 是 NumPy 数组，转换为 float 列表
             if isinstance(embedding, np.ndarray):
                 embedding = embedding.tolist()
 
