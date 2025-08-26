@@ -13,8 +13,8 @@ from .task_response import TaskResponse
 
 class GenerationService:
     """
-    LLMのテキスト生成 (completions_stream) を専門に行うサービス。
-    LLMModelから委譲されて、生成処理を実行する。
+    专门处理 LLM 的文本生成（completions_stream）。
+    由 LLMModel 委托，负责执行生成处理。
     """
 
     def __init__(self):
@@ -22,7 +22,7 @@ class GenerationService:
 
     def generate_completion(self, llm_model: LLMModel, params :Any) -> Generator[Dict[str, Any], None, None]:
         """
-        テキスト生成を実行。stream対応。
+        执行文本生成，支持流式返回。
         """
 
         if not isinstance(llm_model, LLMModel):

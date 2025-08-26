@@ -28,15 +28,14 @@ def generate(params):
 
     combined_audio = np.concatenate(all_audio)
 
-    # 空のByteIOを用意（WAV用とMP3用）
+    # 使用空的 BytesIO 来保存 WAV 与 MP3 数据
     wav_data = io.BytesIO()    
     mp3_data = io.BytesIO() 
+    scipy.io.wavfile.write(wav_data, sample_rate, combined_audio)  # 使用 scipy.io.wavfile 将 WAV 数据写入内存
+    wav_data.seek(0)  # 将文件指针归位到开头
+    audio_segment = AudioSegment.from_wav(wav_data)  # 使用 pydub.AudioSegment 读取内存中的 WAV 数据
 
-    scipy.io.wavfile.write(wav_data, sample_rate, combined_audio)  # scipy.io.wavfile を使って WAV データをメモリ上に保存
-    wav_data.seek(0)  # ファイルポインタを先頭に戻す
-    audio_segment = AudioSegment.from_wav(wav_data) # pydub.AudioSegment を使ってメモリ上の WAV データを読み込む
+    audio_segment.export(mp3_data, format="mp3", bitrate="32k")  # 转换为 MP3 格式
 
-    audio_segment.export(mp3_data, format="mp3", bitrate="32k")  # MP3形式に変換
-
-    # MP3データをBytesで返す
+    # 返回 MP3 数据的 bytes
     return mp3_data.getvalue()
