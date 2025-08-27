@@ -369,6 +369,34 @@ You can speficy following both cases.
   - A HuggingFace model name (e.g., "mlx-community/whisper-large-v3-mlx")
   - A local directory path containing the model files
 
+# Update LoRA support for MLX
+This branch adds basic LoRA (adapter) support for MLX models. Adapters are managed similarly to models and stored under the repository `adapters/` directory. Frontend clients specify an `adapter_name` (not a filesystem path) when loading a model to apply a LoRA adapter.
+
+Available APIs
+----------------
+
+`/v1/internal/adapter/list`
+
+Get a list of available adapters (file name or folder name). The API intentionally does not expose filesystem paths for security.
+
+```console
+$ curl -X GET http://localhost:4000/v1/internal/adapter/list
+
+{"adapters": [{"name": "test-adapter.safetensors"}]}
+```
+
+`/v1/internal/model/load`
+
+To load a model with an adapter, pass `adapter_name` in the JSON body. If `adapter_name` is omitted or an empty string, no adapter is applied.
+
+```console
+$ curl -X POST -H "Content-Type: application/json" -H "X-Model-Id: 0" \
+  -d '{"llm_model_name":"qwen3-8b-mlx-4bit","adapter_name":"test-adapter.safetensors"}' \
+  http://localhost:4000/v1/internal/model/load
+
+{"load":"success"}
+```
+
 # Unsupported/Future improvements
 
-* Load LoRA (adapter) is currently unsupported yet.
+* Lora is only support for MLX model now
