@@ -29,3 +29,24 @@ def create_model_list():
     return models
 
 
+def create_adapter_list():
+    """
+    Scan the repository's `adapters/` directory and return a mapping
+    of {adapter_name: {path}}.
+    Adapters may be a single file (for example, .safetensors) or a directory.
+    """
+    adapters = {}
+    adapters_dir = "adapters"
+    if not os.path.exists(adapters_dir):
+        return adapters
+
+    for f in os.listdir(adapters_dir):
+        full = os.path.join(adapters_dir, f)
+        if os.path.isdir(full) or (os.path.isfile(full) and f.endswith(".safetensors")):
+            adapter_name = f
+            adapter_path = full
+            adapters[adapter_name] = {"path": adapter_path}
+
+    return adapters
+
+

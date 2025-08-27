@@ -64,7 +64,7 @@ async def lifespan(app: FastAPI):
 
     app.state.tmpdir = "temp"
     app.state.models = create_model_list()
-    # 初始化 adapters 列表
+    # Initialize adapters list
     try:
         app.state.adapters = create_adapter_list()
     except Exception:
@@ -249,9 +249,9 @@ def post_model_load(params: ModelLoadParams, model_id: str = Header(default="0",
 
     params.llm_model_path = app.state.models[model_name]['path']
 
-    # 仅允许 adapter_name（前端传入适配器名）来指定 LoRA adapter，拒绝直接传入 adapter_path
+    # get adapter name
     adapter_name = getattr(params, "adapter_name", None)
-    # 允许前端传空字符串表示不使用 adapter；归一化为空字符串为 None
+    # using empter str to disable adapter
     if isinstance(adapter_name, str):
         adapter_name = adapter_name.strip() or None
     if adapter_name:
@@ -260,7 +260,6 @@ def post_model_load(params: ModelLoadParams, model_id: str = Header(default="0",
             raise HTTPException(status_code=400, detail=f"Error: adapter {adapter_name} not found.")
         setattr(params, "adapter_path", adapters[adapter_name]["path"])
     else:
-        # 不允许客户端直接指定 adapter_path，必须使用 adapter_name
         if getattr(params, "adapter_path", None):
             raise HTTPException(status_code=400, detail="Direct adapter_path is not allowed. Use adapter_name.")
 
@@ -401,13 +400,9 @@ async def export_kv_cache(session_id: str):
 
 @app.get("/v1/internal/adapter/list")
 def get_v1_internal_adapter_list():
-    """返回已扫描到的 adapter 列表（仅 name 与 size，不暴露文件系统路径）。"""
+    """Return the scanned adapter list (only name and size; do not expose filesystem paths)."""
     adapters = getattr(app.state, "adapters", {}) or {}
-    adapter_entries = []
-    for name in adapters.items():
-        adapter_entries.append({
-            "name": name
-        })
+    adapter_entries = list(app.state.adapters.values())
     adapter_entries = sorted(adapter_entries, key=lambda x: x["name"])
     return {"adapters": adapter_entries}
 
@@ -442,7 +437,7 @@ async def import_kv_cache(session_id: str, file: UploadFile):
         return {"status": "success", "message": f"Cache {session_id} imported"}
 
     except Exception as e:
-        # 出错时清理临时文件
+        # Clean up temporary files on error
         if upload_file_path and os.path.exists(upload_file_path):
             try:
                 os.remove(upload_file_path)
@@ -456,7 +451,7 @@ async def import_kv_cache(session_id: str, file: UploadFile):
         raise HTTPException(500, str(e)) from e
 
     finally:
-        # 确保清理临时目录
+        # Ensure temporary directory is removed
         if temp_dir and os.path.exists(temp_dir):
             try:
                 os.rmdir(temp_dir)
