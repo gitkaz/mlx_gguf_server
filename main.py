@@ -21,7 +21,7 @@ import embedding.run_process
 from core.process_manager import LLMProcess
 from schemas import CompletionParams, TokenCountParams, ModelLoadParams, ProcessCleanParams, KokoroTtsParams, EmbeddingsParams
 from embedding.embedding_schemas import OpenAICompatibleEmbeddings
-from utils.utils import create_model_list
+from utils.utils import create_model_list, create_adapter_list
 from utils.kv_cache_utils import prepare_temp_dir, validate_session_id, validate_filename, process_upload_file
 from whisper_stt.whisper import AudioTranscriber
 # from logging import getLogger
@@ -64,6 +64,11 @@ async def lifespan(app: FastAPI):
 
     app.state.tmpdir = "temp"
     app.state.models = create_model_list()
+    # Initialize adapters list
+    try:
+        app.state.adapters = create_adapter_list()
+    except Exception:
+        app.state.adapters = {}
     app.state.llm_processes = {}
     init_task_scheduler()
     yield
@@ -244,6 +249,20 @@ def post_model_load(params: ModelLoadParams, model_id: str = Header(default="0",
 
     params.llm_model_path = app.state.models[model_name]['path']
 
+    # get adapter name
+    adapter_name = getattr(params, "adapter_name", None)
+    # using empter str to disable adapter
+    if isinstance(adapter_name, str):
+        adapter_name = adapter_name.strip() or None
+    if adapter_name:
+        adapters = getattr(app.state, "adapters", {}) or {}
+        if adapter_name not in adapters:
+            raise HTTPException(status_code=400, detail=f"Error: adapter {adapter_name} not found.")
+        setattr(params, "adapter_path", adapters[adapter_name]["path"])
+    else:
+        if getattr(params, "adapter_path", None):
+            raise HTTPException(status_code=400, detail="Direct adapter_path is not allowed. Use adapter_name.")
+
     llm_process: LLMProcess = create_llm_process(model_id)
 
     status_code, response = asyncio.run(llm_process.task_request('load', params))
@@ -311,13 +330,14 @@ async def post_audio_transcribe(
 
     if not app.state.enable_whisper:
         raise HTTPException(status_code=400, detail="Whisper transcription is not enabled")
-    if not file.filename.lower().endswith(('.wav', '.mp3', '.m4a', 'webm')):
+    filename = getattr(file, 'filename', '') or ''
+    if not filename.lower().endswith(('.wav', '.mp3', '.m4a', 'webm')):
         raise HTTPException(status_code=400, detail="Only WAV, MP3, M4A or WEBM files are allowed")
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    file_extension = os.path.splitext(file.filename)[1]
+    file_extension = os.path.splitext(filename)[1]
     new_filename = f"audio_{timestamp}{file_extension}"
-    file_path = os.path.join("whisper_stt/uploads", new_filename)
+    file_path = os.path.join("whisper_stt", "uploads", new_filename)
         
     content = await file.read()
     with open(file_path, "wb") as f:
@@ -378,6 +398,15 @@ async def export_kv_cache(session_id: str):
     )
 
 
+@app.get("/v1/internal/adapter/list")
+def get_v1_internal_adapter_list():
+    """Return the scanned adapter list (only name and size; do not expose filesystem paths)."""
+    adapters = getattr(app.state, "adapters", {}) or {}
+    adapter_entries = list(app.state.adapters.values())
+    adapter_entries = sorted(adapter_entries, key=lambda x: x["name"])
+    return {"adapters": adapter_entries}
+
+
 @app.post("/v1/internal/model/kv_cache/import/{session_id}")
 async def import_kv_cache(session_id: str, file: UploadFile):
     """
@@ -385,14 +414,17 @@ async def import_kv_cache(session_id: str, file: UploadFile):
     Uploaded KV Cache file must be safetensors file or gz compressed safetensors.
     Uploaded KV Cache filename must be <UUIDv4>.safetensors or <UUIDv4>.safetensors.gz. This UUID is used as session_id
     """
+    upload_file_path = None
+    temp_dir = None
     try:
         # Validate inputs
         validate_session_id(session_id=session_id)
-        validate_filename(session_id=session_id, filename=file.filename)
+        filename = getattr(file, 'filename', '') or ''
+        validate_filename(session_id=session_id, filename=filename)
 
         # Create temporary directory inside llm_process/kv_cache/tmp/
         temp_dir = prepare_temp_dir(tmp_base_dir=app.state.tmpdir)
-        upload_file_path = os.path.join(temp_dir, file.filename)
+        upload_file_path = os.path.join(temp_dir, filename)
 
         # process uploaded file
         upload_file_path = await process_upload_file(file=file, file_path=upload_file_path)
@@ -405,18 +437,26 @@ async def import_kv_cache(session_id: str, file: UploadFile):
         return {"status": "success", "message": f"Cache {session_id} imported"}
 
     except Exception as e:
-        # Cleanup temp files on error
-        if os.path.exists(upload_file_path):
-            os.remove(upload_file_path)
-        if os.path.exists(upload_file_path):
-            os.remove(upload_file_path)
-        os.rmdir(temp_dir)
+        # Clean up temporary files on error
+        if upload_file_path and os.path.exists(upload_file_path):
+            try:
+                os.remove(upload_file_path)
+            except OSError:
+                pass
+        if temp_dir and os.path.exists(temp_dir):
+            try:
+                os.rmdir(temp_dir)
+            except OSError:
+                pass
         raise HTTPException(500, str(e)) from e
 
     finally:
-        # Ensure temp directory is cleaned up
-        if os.path.exists(temp_dir):
-            os.rmdir(temp_dir)
+        # Ensure temporary directory is removed
+        if temp_dir and os.path.exists(temp_dir):
+            try:
+                os.rmdir(temp_dir)
+            except OSError:
+                pass
 
 
 def parse_arguments():

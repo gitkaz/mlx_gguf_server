@@ -55,7 +55,9 @@ class TokenCountParams(BaseModel):
 class ModelLoadParams(BaseModel):
     llm_model_name: str
     llm_model_path: str = Field(default="", exclude=True)
-    chat_format: str = None # llama-cpp only
+    adapter_name: Optional[str] = None
+    adapter_path: Optional[str] = Field(default=None, exclude=True)
+    chat_format: Optional[str] = None # 仅用于 llama-cpp
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
     logit_bias: Optional[Dict[int, float]] = None
