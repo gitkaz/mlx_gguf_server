@@ -1,39 +1,115 @@
 import os
 import time
+import json
 from typing import Dict, Any, List
 from mlx_lm.models.cache import make_prompt_cache, save_prompt_cache, load_prompt_cache
 from .logger_config import setup_logger
+
 logger = setup_logger(__name__, level="DEBUG")
 
 KV_CACHE_DIR = "worker/kv_cache"
 
-def load_kv_cache(model, messages: List):
+def load_kv_cache(model, prompt_tokens: List):
+    """
+    Find the best matching KV cache by comparing token sequences (not message IDs)
+
+    Returns:
+        (cache, metadata, start_index, stats) where:
+        - cache: The KV cache to use
+        - metadata: Associated metadata
+        - start_index: Where to start processing in the tokenized prompt
+        - stats: Performance/stats information
+    """
     metadata = {}
     stats = {}
-    for reversed_index, message in enumerate(reversed(messages)):
-        expect_file_name = f'{message["message_id"]}.safetensors'
-        expect_file_path = os.path.join(KV_CACHE_DIR, expect_file_name)
-        if os.path.exists(expect_file_path):
-            index = len(messages) - reversed_index
-            logger.debug(f"kv cache hit. {expect_file_path}. index = {index}.")
 
-            start_time = time.time()
-            cache, metadata = load_prompt_cache(expect_file_path, return_metadata=True)
-            load_time = time.time() - start_time
-            os_stat = os.stat(expect_file_path)
-            stats["filename"]  = expect_file_name
-            stats["size"]      = os_stat.st_size
-            stats["load_time"] = load_time
-            return cache, metadata, index, stats
+    start_time = time.time()
+    cache_files = []
+    for f in os.listdir(KV_CACHE_DIR):
+        if f.endswith('.safetensors'):
+            f_path = os.path.join(KV_CACHE_DIR, f)
+            # Skip files that are too new (still being written)
+            if time.time() - os.path.getmtime(f_path) < 1:
+                continue
+            cache_files.append((os.path.getmtime(f_path), f_path))
+    # Sort by modification time, newest first
+    cache_files.sort(key=lambda x: x[0], reverse=True)
+    sort_time = time.time() - start_time
+    logger.debug(f"{sort_time=}")
 
-    logger.debug("kv cache not hit. create new cache.")
-    metadata["token_count"] = 0
-    cache = make_prompt_cache(model=model)
-    return cache, metadata, None, stats
+    best_match = {
+        "prefix_len": 0,
+        "cache": None,
+        "metadata": None,
+        "file_path": None
+    }    
+
+    # Check each cache file for the best token match
+    for _, file_path in cache_files:
+        try:
+            # Load cache with metadata
+            cache, metadata = load_prompt_cache(file_path, return_metadata=True)
+            os_stat = os.stat(file_path)
+
+            # Extract tokens from metadata
+            try:
+                cached_tokens = json.loads(metadata.get("tokens", "[]"))
+            except:
+                continue
+
+            # Calculate common prefix length
+            common_len = 0
+            min_len = min(len(cached_tokens), len(prompt_tokens))
+            for i in range(min_len):
+                if cached_tokens[i] != prompt_tokens[i]:
+                    break
+                common_len = i + 1
+
+            # Only consider caches where:
+            # - We have a non-zero match
+            # - Current prompt is longer than cached tokens
+            # - This is the best match so far
+            if (common_len > 0 and 
+                len(prompt_tokens) > len(cached_tokens) and
+                common_len > best_match["prefix_len"]):
+
+                best_match.update({
+                    "prefix_len": common_len,
+                    "cache": cache,
+                    "metadata": metadata,
+                    "file_path": file_path,
+                    "size": os_stat.st_size
+                })
+
+        except Exception as e:
+            logger.warning(f"Error loading cache {file_path}: {str(e)}")
+            continue
+
+    # Process the best match
+    if best_match["cache"] is not None:
+        logger.debug(f"KV cache hit! Prefix length: {best_match['prefix_len']}, "
+                    f"from cache: {os.path.basename(best_match['file_path'])}")
+        
+        # Return the cache, metadata, and where to start processing
+        return (
+            best_match["cache"],
+            best_match["metadata"],
+            best_match["prefix_len"],
+            {
+                "prefix_len": best_match["prefix_len"],
+                "cached_tokens": len(json.loads(best_match["metadata"].get("tokens", "[]"))),
+                "filename": os.path.basename(best_match["file_path"]),
+                "size": best_match["size"],
+                "load_time": 0
+            }
+        )
+
+    # No suitable cache found
+    logger.debug("No KV cache hit. Creating new cache.")
+    return make_prompt_cache(model), {"token_count": 0}, 0, {}
 
 def save_kv_cache(message_id: str, kv_cache: List[any], metadata: Dict):
     clean_kv_cache()
-    logger.debug(f"metadata={metadata}")
     filepath = os.path.join(KV_CACHE_DIR, f"{message_id}.safetensors")
     save_prompt_cache(file_name=filepath, cache=kv_cache, metadata=metadata)
 
