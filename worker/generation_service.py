@@ -2,14 +2,18 @@ from typing import Generator, Dict, Any, List
 import mlx.core as mx
 import uuid
 import time
+import json
 from mlx_lm.sample_utils import make_sampler, make_logits_processors
 from transformers import PreTrainedTokenizer
-
 from .kv_cache_manager import load_kv_cache, save_kv_cache
 from .tokenizer_service import TokenizerService
 from .llm_model import LLMModel
 
 from .task_response import TaskResponse
+
+from .logger_config import setup_logger
+logger = setup_logger(__name__, level="DEBUG")
+
 
 class GenerationService:
     """
@@ -73,7 +77,7 @@ class GenerationService:
 
         request_id = str(uuid.uuid4())
         created_time = int(time.time())
-        all_tokens = []
+        all_generated_tokens = []
 
         prompt = ""
         kv_cache = None
@@ -85,22 +89,22 @@ class GenerationService:
             if params.apply_chat_template:
                 messages = params.messages
 
+                prompt = self.tokenizer_service.apply_chat_template(
+                    tokenizer=tokenizer,
+                    messages=messages[index:],
+                    add_generation_prompt=True,
+                    tools=gen_params["tools"]
+                )
+                prompt_tokens = tokenizer.encode(prompt)
+
                 # KV Cacheの利用（use_kv_cacheがTrueの場合）
                 if params.use_kv_cache:
-                    kv_cache, kv_cache_metadata, index, kv_load_stats = load_kv_cache(model, messages)
-                    prompt = self.tokenizer_service.apply_chat_template(
-                        tokenizer=tokenizer,
-                        messages=messages[index:],
-                        tools=gen_params["tools"]
-                    )
-                else:
-                    prompt = self.tokenizer_service.apply_chat_template(
-                        tokenizer=tokenizer,
-                        messages=messages,
-                        tools=gen_params["tools"]
-                    )
+                    kv_cache, kv_cache_metadata, start_index, kv_load_stats = load_kv_cache(model, prompt_tokens)
+                    prompt_tokens = prompt_tokens[start_index:]
             else:
                 prompt = params.prompt
+                prompt_tokens = tokenizer.encode(prompt)
+
 
             # 生成処理
             start_time = time.perf_counter()
@@ -109,7 +113,7 @@ class GenerationService:
             for item in stream_generate(
                 model=model,
                 tokenizer=tokenizer,
-                prompt=prompt,
+                prompt=prompt_tokens,
                 max_tokens=params.max_tokens,
                 prompt_cache=kv_cache,
                 sampler=sampler,
@@ -117,11 +121,11 @@ class GenerationService:
             ):
                 text = item.text
                 token = item.token
-                all_tokens.append(token)
+                all_generated_tokens.append(token)
 
                 # stop sequenceチェック
-                if self._check_stop(params.stop, all_tokens, tokenizer):
-                    del all_tokens[-1]
+                if self._check_stop(params.stop, all_generated_tokens, tokenizer):
+                    del all_generated_tokens[-1]
                     break
 
                 if params.stream:
@@ -136,11 +140,11 @@ class GenerationService:
 
             # 非stream時の最終結果
             if not params.stream:
-                text = tokenizer.decode(all_tokens)
+                text = tokenizer.decode(all_generated_tokens)
                 response = self._create_final_response(
                     request_id, created_time, model_name, params.apply_chat_template, text
                 )
-                response["usage"] = self._calculate_usage(prompt, all_tokens, tokenizer, start_time, prompt_eval_time)
+                response["usage"] = self._calculate_usage(prompt, all_generated_tokens, tokenizer, start_time, prompt_eval_time)
                 yield response
 
             # complete_textの有無に関わらず、usageを含む応答を返す
@@ -148,13 +152,15 @@ class GenerationService:
             perf_timer = [start_time, prompt_eval_time, generate_time] if 'prompt_eval_time' in locals() else []
 
             response = self._create_usage_response(request_id, created_time, model_name)
-            response["usage"] = self._calculate_usage(prompt, all_tokens, tokenizer, *perf_timer)
+            response["usage"] = self._calculate_usage(prompt, all_generated_tokens, tokenizer, *perf_timer)
 
             # KV Cacheの保存
             if params.use_kv_cache and kv_cache is not None:
+                cached_tokens = prompt_tokens + all_generated_tokens
                 cached_token_count = response["usage"]["total_tokens"] + int(kv_cache_metadata.get("token_count", 0))
                 kv_cache_metadata["model_name"] = str(model_name)
                 kv_cache_metadata["chat_template"] = str(tokenizer.chat_template)
+                kv_cache_metadata["tokens"] = json.dumps(cached_tokens)
                 kv_cache_metadata["token_count"] = str(cached_token_count)
                 save_kv_cache(message_id=request_id, kv_cache=kv_cache, metadata=kv_cache_metadata)
 
