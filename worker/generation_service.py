@@ -155,7 +155,10 @@ class GenerationService:
 
             # KV Cacheの保存
             if params.use_kv_cache and kv_cache is not None:
-                cached_tokens = prompt_tokens + all_generated_tokens
+                cached_tokens = tokenizer.encode(prompt) + all_generated_tokens
+                if cached_tokens[-1] in tokenizer.eos_token_ids:
+                    cached_tokens = cached_tokens[:-1]
+                logger.debug(f"{tokenizer.decode(cached_tokens)=}")
                 cached_token_count = response["usage"]["total_tokens"] + int(kv_cache_metadata.get("token_count", 0))
                 kv_cache_metadata["model_name"] = str(model_name)
                 kv_cache_metadata["chat_template"] = str(tokenizer.chat_template)
