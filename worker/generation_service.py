@@ -88,7 +88,6 @@ class GenerationService:
         try:
             if params.apply_chat_template:
                 messages = params.messages
-
                 prompt = self.tokenizer_service.apply_chat_template(
                     tokenizer=tokenizer,
                     messages=messages[index:],
