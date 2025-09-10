@@ -35,17 +35,15 @@ class TokenizerService:
 
         try:
             chat_prompt = tokenizer.apply_chat_template(messages, tools=tools, tokenize=False, add_generation_prompt=True)
-            logger.debug(f"{chat_prompt=}")
         except Exception as e:
             logger.warning(f"Chat template failed (attempt 1): {str(e)}")
             try:
                 tokenizer.chat_template = tokenizer.default_chat_template
                 chat_prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-                logger.debug(f"{chat_prompt=}")
             except Exception as e2:
                 logger.warning(f"Chat template failed (attempt 2): {str(e2)}")
                 chat_prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, chat_template=chatml_instruct_template)
-                logger.debug(f"{chat_prompt=}")
+        logger.debug(f"{chat_prompt=}")
         return chat_prompt
 
     def count_tokens(self, llm_model: LLMModel, params: TokenCountParams) -> TaskResponse:

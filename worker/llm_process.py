@@ -20,7 +20,7 @@ async def start_llm_process(request_queue: Queue, response_queue: Queue):
     while True:
         item = request_queue.get()
         if item is None:
-            logger.debug("llm_process receied \"None\". process quitting.")
+            logger.debug("llm_process received \"None\". process quitting.")
             break
         else:
             task, request_id, params = item

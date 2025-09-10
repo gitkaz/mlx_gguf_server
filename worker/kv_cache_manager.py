@@ -2,7 +2,7 @@ import os
 import time
 import json
 from typing import Dict, Any, List
-from mlx_lm.models.cache import make_prompt_cache, save_prompt_cache, load_prompt_cache
+from mlx_lm.models.cache import make_prompt_cache, save_prompt_cache, load_prompt_cache, can_trim_prompt_cache, trim_prompt_cache
 from .logger_config import setup_logger
 
 logger = setup_logger(__name__, level="DEBUG")
@@ -21,9 +21,7 @@ def load_kv_cache(model, prompt_tokens: List):
         - stats: Performance/stats information
     """
     metadata = {}
-    stats = {}
 
-    start_time = time.time()
     cache_files = []
     for f in os.listdir(KV_CACHE_DIR):
         if f.endswith('.safetensors'):
@@ -34,8 +32,6 @@ def load_kv_cache(model, prompt_tokens: List):
             cache_files.append((os.path.getmtime(f_path), f_path))
     # Sort by modification time, newest first
     cache_files.sort(key=lambda x: x[0], reverse=True)
-    sort_time = time.time() - start_time
-    logger.debug(f"{sort_time=}")
 
     best_match = {
         "prefix_len": 0,
@@ -65,13 +61,18 @@ def load_kv_cache(model, prompt_tokens: List):
                     break
                 common_len = i + 1
 
-            # Only consider caches where:
-            # - We have a non-zero match
-            # - Current prompt is longer than cached tokens
-            # - This is the best match so far
-            if (common_len > 0 and 
-                len(prompt_tokens) > len(cached_tokens) and
-                common_len > best_match["prefix_len"]):
+            if (best_match["prefix_len"] < common_len and common_len < len(prompt_tokens)):
+
+                # if common_len < lan(cached_tokens), cache is needed to be trimmed.
+                if common_len < len(cached_tokens):
+                    if can_trim_prompt_cache(cache):
+                        # 2025/09/10 
+                        # mlx-0.29.0 and mlx_lm-0.27.0
+                        # as far as I tested, trim_len need to be add 1... (not sure why... orz)
+                        trim_len = len(cached_tokens) - common_len +1
+                        trim_prompt_cache(cache, trim_len)                        
+                    else:
+                        continue
 
                 best_match.update({
                     "prefix_len": common_len,
