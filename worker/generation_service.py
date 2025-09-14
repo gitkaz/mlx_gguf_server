@@ -5,7 +5,7 @@ import time
 import json
 from mlx_lm.sample_utils import make_sampler, make_logits_processors
 from transformers import PreTrainedTokenizer
-from .kv_cache_manager import load_kv_cache, save_kv_cache
+from .kv_cache_manager import KVCacheManager
 from .tokenizer_service import TokenizerService
 from .llm_model import LLMModel
 
@@ -21,53 +21,50 @@ class GenerationService:
     LLMModelから委譲されて、生成処理を実行する。
     """
 
-    def __init__(self):
+    def __init__(self, llm_model: LLMModel, params: Any, cache_manager: KVCacheManager):
         self.tokenizer_service = TokenizerService()
-
-    def generate_completion(self, llm_model: LLMModel, params :Any) -> Generator[Dict[str, Any], None, None]:
-        """
-        テキスト生成を実行。stream対応。
-        """
+        self.kvcache_manager = cache_manager or KVCacheManager()
 
         if not isinstance(llm_model, LLMModel):
             raise TypeError("First argument must be LLMModel instance")
+        
+        self.model = llm_model.model
+        self.tokenizer :PreTrainedTokenizer = llm_model.tokenizer
+        self.model_type :str = llm_model.model_type
+        self.model_name :str = llm_model.model_name
+        self.default_gen_params :Dict[str, Any] = llm_model.default_gen_params
+        self.params = params
 
-        model = llm_model.model
-        tokenizer = llm_model.tokenizer
-        model_type = llm_model.model_type
-        model_name = llm_model.model_name
-        default_gen_params = llm_model.default_gen_params
-
-
+    def generate_completion(self) -> Generator[Dict[str, Any], None, None]:
+        """
+        テキスト生成を実行。stream対応。
+        """
 
         def exception_response(e: Exception, source: str) -> Generator[Dict[str, Any], None, None]:
             error_msg = f"Error in GenerationService.generate_completion ({source}): {str(e)}"
             yield TaskResponse.create(500, {"error": error_msg}).to_dict()
 
         try:
-            if model_type == "mlx":
-                yield from self._generate_mlx(
-                    model, tokenizer, model_name, default_gen_params, params
-                )
-            elif model_type == "llama-cpp":
-                yield from self._generate_llama_cpp(model, params)
+            if self.model_type == "mlx":
+                yield from self._generate_mlx()
+            elif self.model_type == "llama-cpp":
+                yield from self._generate_llama_cpp()
             else:
-                yield TaskResponse.create(500, {"error": f"Unsupported model type: {model_type}"}).to_dict()
+                yield TaskResponse.create(500, {"error": f"Unsupported model type: {self.model_type}"}).to_dict()
         except Exception as e:
             yield from exception_response(e, "main")
 
-    def _generate_mlx(
-        self,
-        model: Any,
-        tokenizer: PreTrainedTokenizer,
-        model_name: str,
-        default_gen_params: Dict[str, Any],
-        params: Any
-    ) -> Generator[Dict[str, Any], None, None]:
+
+    def _generate_mlx(self) -> Generator[Dict[str, Any], None, None]:
         from mlx_lm.generate import stream_generate
 
+        model = self.model
+        model_name = self.model_name
+        tokenizer = self.tokenizer
+        params = self.params
+
         # パラメータの統合
-        gen_params = self._build_mlx_params(default_gen_params, params)
+        gen_params = self._build_mlx_params()
         sampler = make_sampler(gen_params["temperature"], top_p=gen_params["top_p"])
         logits_processors = make_logits_processors(
             gen_params["logit_bias"],
@@ -82,30 +79,30 @@ class GenerationService:
         prompt = ""
         kv_cache = None
         kv_cache_metadata = {}
-        kv_load_stats = {}
-        index = 0
 
         try:
+            # create pompt_tokens based on value of params.apply_chat_template
             if params.apply_chat_template:
                 messages = params.messages
+
                 prompt = self.tokenizer_service.apply_chat_template(
                     tokenizer=tokenizer,
-                    messages=messages[index:],
+                    messages=messages,
                     add_generation_prompt=True,
                     tools=gen_params["tools"]
                 )
                 prompt_tokens = tokenizer.encode(prompt)
-
-                # KV Cacheの利用（use_kv_cacheがTrueの場合）
-                if params.use_kv_cache:
-                    kv_cache, kv_cache_metadata, start_index, kv_load_stats = load_kv_cache(model, prompt_tokens)
-                    prompt_tokens = prompt_tokens[start_index:]
             else:
                 prompt = params.prompt
                 prompt_tokens = tokenizer.encode(prompt)
 
+            # load kv cache based on prompt_tokens
+            if params.use_kv_cache:
+                kv_cache, start_index, kv_load_stats = self.kvcache_manager.load_kv_cache(model, prompt_tokens)
+                prompt_tokens = prompt_tokens[start_index:]
 
-            # 生成処理
+
+            # generate text based on prompt_tokens and kv_cache (if params.use_kv_cache is True)
             start_time = time.perf_counter()
             is_first_token = True
 
@@ -122,7 +119,7 @@ class GenerationService:
                 token = item.token
                 all_generated_tokens.append(token)
 
-                # stop sequenceチェック
+                # check stop sequence
                 if self._check_stop(params.stop, all_generated_tokens, tokenizer):
                     del all_generated_tokens[-1]
                     break
@@ -158,13 +155,12 @@ class GenerationService:
                 cached_tokens = tokenizer.encode(prompt) + all_generated_tokens
                 if cached_tokens[-1] in tokenizer.eos_token_ids:
                     cached_tokens = cached_tokens[:-1]
-                logger.debug(f"{tokenizer.decode(cached_tokens)=}")
-                cached_token_count = response["usage"]["total_tokens"] + int(kv_cache_metadata.get("token_count", 0))
+
                 kv_cache_metadata["model_name"] = str(model_name)
                 kv_cache_metadata["chat_template"] = str(tokenizer.chat_template)
                 kv_cache_metadata["tokens"] = json.dumps(cached_tokens)
-                kv_cache_metadata["token_count"] = str(cached_token_count)
-                save_kv_cache(message_id=request_id, kv_cache=kv_cache, metadata=kv_cache_metadata)
+                kv_cache_metadata["token_count"] = str(len(cached_tokens))
+                self.kvcache_manager.save_kv_cache(message_id=request_id, kv_cache=kv_cache, metadata=kv_cache_metadata)
 
                 response["usage"]["kv_cache"] = {
                     "cached_tokens": kv_cache_metadata["token_count"],
@@ -239,7 +235,10 @@ class GenerationService:
         except Exception as e:
             yield from self._exception_response(e, "llama-cpp")
 
-    def _build_mlx_params(self, default: Dict[str, Any], params: Any) -> Dict[str, Any]:
+    def _build_mlx_params(self) -> Dict[str, Any]:
+        default = self.default_gen_params
+        params = self.params
+
         fallbacks = {
             'temperature': 1.0,
             'max_tokens': 4096,
