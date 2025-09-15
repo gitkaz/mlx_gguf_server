@@ -8,7 +8,8 @@ from .utils import get_dir_size, get_oldest_file
 from .logger_config import setup_logger
 from .kv_cache_metadata import KVCacheMetadataStore
 
-logger = setup_logger(__name__, level="DEBUG")
+log_level = os.environ.get("LOG_LEVEL", "INFO")
+logger = setup_logger(__name__, level=log_level)
 
 class KVCacheManager:
     """
@@ -121,8 +122,7 @@ class KVCacheManager:
     def save_kv_cache(self, message_id: str, kv_cache: List[any], metadata: Dict):
         self.clean_kv_cache()
         filepath = os.path.join(self.cache_dir, f"{message_id}.safetensors")
-        logger.debug(f"saving {message_id}.safetensors")
-        # logger.debug(f"metadata = {metadata}")
+        logger.info(f"saving {message_id}.safetensors")
         save_prompt_cache(file_name=filepath, cache=kv_cache, metadata=metadata)
         # Update metadata store
         self.metadata_store.add(filepath, metadata)
@@ -140,12 +140,12 @@ class KVCacheManager:
         dir_size = get_dir_size(self.cache_dir)
 
         if dir_size > max_kv_size:
-            logger.debug(f"kv cache size overed threshold: {dir_size}")
+            logger.info(f"kv cache size overed threshold: {dir_size}")
             oldest_file = get_oldest_file(self.cache_dir)
             if oldest_file:
                 self.metadata_store.remove(oldest_file)
                 os.remove(oldest_file)
-                logger.debug(f"deleted kv cache: {oldest_file}")
+                logger.info(f"deleted kv cache: {oldest_file}")
             self.clean_kv_cache()
 
     def load_kv_cache(self, model, prompt_tokens: List):
@@ -191,7 +191,7 @@ class KVCacheManager:
             return (cache, best_match["prefix_len"], kv_load_stats)
 
         # No suitable cache found
-        logger.debug("No KV cache hit. Creating new cache.")
+        logger.info("No KV cache hit. Creating new cache.")
         dummy_stats =  {"filename": "new cache", "cached_tokens": 0, "size": 0, "load_time": 0}
         return make_prompt_cache(model), 0, dummy_stats
 

@@ -1,5 +1,6 @@
 from typing import Generator, Dict, Any, List
 import mlx.core as mx
+import os
 import uuid
 import time
 import json
@@ -12,7 +13,9 @@ from .llm_model import LLMModel
 from .task_response import TaskResponse
 
 from .logger_config import setup_logger
-logger = setup_logger(__name__, level="DEBUG")
+
+log_level = os.environ.get("LOG_LEVEL", "INFO")
+logger = setup_logger(__name__, level=log_level)
 
 
 class GenerationService:

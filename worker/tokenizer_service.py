@@ -6,9 +6,8 @@ import json
 from .task_response import TaskResponse
 from .llm_model import LLMModel
 from schemas import TokenCountParams
-
-
 from .logger_config import setup_logger
+
 log_level = os.environ.get("LOG_LEVEL", "INFO")
 logger = setup_logger(__name__, level=log_level)
 
