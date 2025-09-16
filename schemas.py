@@ -6,13 +6,13 @@ class CompletionParams(BaseModel):
     model: str = "dummy"
     prompt: str = ""
     messages: List[Dict] = []
-    max_tokens: Optional[int] = None
-    temperature: Optional[float] = None
+    max_tokens: Optional[int] = 4096
+    temperature: Optional[float] = 1.0
     seed: Optional[int] = None
     stream: bool = False
     apply_chat_template: bool = False
     complete_text: bool = False
-    top_p: Optional[float] = None
+    top_p: Optional[float] = 1.0
     stop: Optional[list] = []
     logit_bias: Optional[Dict[int, float]] = None # mlx only
     repetition_penalty: Optional[float] = None    # mlx only
@@ -22,11 +22,9 @@ class CompletionParams(BaseModel):
     top_k: int = 0                      # llama-cpp only
     min_p: float = 0.05                 # llama-cpp only
     typical_p: float = 1.0              # llama-cpp only
-    stop: list = []                     # llama-cpp only
     frequency_penalty: float = 0.0      # llama-cpp only
     presence_penalty: float = 0.0       # llama-cpp only
     repet_penalty: float = 1.1          # llama-cpp only
-    top_k: int = 40                     # llama-cpp only
     mirostat_mode: int = 0              # llama-cpp only
     mirostat_tau: float = 5.0           # llama-cpp only
     mirostat_eta: float = 0.1           # llama-cpp only
@@ -57,13 +55,14 @@ class ModelLoadParams(BaseModel):
     llm_model_path: str = Field(default="", exclude=True)
     adapter_name: Optional[str] = None
     adapter_path: Optional[str] = Field(default=None, exclude=True)
-    chat_format: Optional[str] = None # 仅用于 llama-cpp
+    chat_format: Optional[str] = None # only for llama-cpp
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
     logit_bias: Optional[Dict[int, float]] = None
     repetition_penalty: Optional[float] = None
     repetition_context_size: Optional[int] = None
     top_p: Optional[float] = None
+    use_kv_cache: Optional[bool] = None
 
 class ProcessCleanParams(BaseModel):
     timeout: int

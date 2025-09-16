@@ -1,5 +1,4 @@
 from typing import Generator, Dict, Any, List
-import mlx.core as mx
 import os
 import uuid
 import time
@@ -9,6 +8,8 @@ from transformers import PreTrainedTokenizer
 from .kv_cache_manager import KVCacheManager
 from .tokenizer_service import TokenizerService
 from .llm_model import LLMModel
+from schemas import CompletionParams
+
 
 from .task_response import TaskResponse
 
@@ -37,6 +38,7 @@ class GenerationService:
         self.model_name :str = llm_model.model_name
         self.default_gen_params :Dict[str, Any] = llm_model.default_gen_params
         self.params = params
+
 
     def generate_completion(self) -> Generator[Dict[str, Any], None, None]:
         """
@@ -67,12 +69,13 @@ class GenerationService:
         params = self.params
 
         # パラメータの統合
-        gen_params = self._build_mlx_params()
-        sampler = make_sampler(gen_params["temperature"], top_p=gen_params["top_p"])
+        gen_params = self._build_merged_params()
+        logger.debug(f"mereged params: {gen_params=}")
+        sampler = make_sampler(gen_params.temperature, top_p=gen_params.top_p)
         logits_processors = make_logits_processors(
-            gen_params["logit_bias"],
-            gen_params["repetition_penalty"],
-            gen_params["repetition_context_size"]
+            gen_params.logit_bias,
+            gen_params.repetition_penalty,
+            gen_params.repetition_context_size
         )
 
         request_id = str(uuid.uuid4())
@@ -85,23 +88,23 @@ class GenerationService:
 
         try:
             # create pompt_tokens based on value of params.apply_chat_template
-            if params.apply_chat_template:
-                messages = params.messages
+            if gen_params.apply_chat_template:
+                messages = gen_params.messages
 
                 prompt = self.tokenizer_service.apply_chat_template(
                     tokenizer=tokenizer,
                     messages=messages,
                     add_generation_prompt=True,
-                    tools=gen_params["tools"]
+                    tools=gen_params.tools
                 )
                 prompt_tokens = tokenizer.encode(prompt)
             else:
-                prompt = params.prompt
+                prompt = gen_params.prompt
                 prompt_tokens = tokenizer.encode(prompt)
 
             # load kv cache based on prompt_tokens
-            if params.use_kv_cache:
-                kv_cache, start_index, kv_load_stats = self.kvcache_manager.load_kv_cache(model, prompt_tokens)
+            if gen_params.use_kv_cache:
+                kv_cache, start_index, kv_load_stats = self.kvcache_manager.load_kv_cache(model, model_name, prompt_tokens)
                 prompt_tokens = prompt_tokens[start_index:]
 
 
@@ -113,7 +116,7 @@ class GenerationService:
                 model=model,
                 tokenizer=tokenizer,
                 prompt=prompt_tokens,
-                max_tokens=params.max_tokens,
+                max_tokens=gen_params.max_tokens,
                 prompt_cache=kv_cache,
                 sampler=sampler,
                 logits_processors=logits_processors,
@@ -123,13 +126,13 @@ class GenerationService:
                 all_generated_tokens.append(token)
 
                 # check stop sequence
-                if self._check_stop(params.stop, all_generated_tokens, tokenizer):
+                if self._check_stop(gen_params.stop, all_generated_tokens, tokenizer):
                     del all_generated_tokens[-1]
                     break
 
-                if params.stream:
+                if gen_params.stream:
                     response = self._create_stream_chunk(
-                        request_id, created_time, model_name, params.apply_chat_template, text
+                        request_id, created_time, model_name, gen_params.apply_chat_template, text
                     )
                     yield response
 
@@ -138,10 +141,10 @@ class GenerationService:
                     is_first_token = False
 
             # 非stream時の最終結果
-            if not params.stream:
+            if not gen_params.stream:
                 text = tokenizer.decode(all_generated_tokens)
                 response = self._create_final_response(
-                    request_id, created_time, model_name, params.apply_chat_template, text
+                    request_id, created_time, model_name, gen_params.apply_chat_template, text
                 )
                 response["usage"] = self._calculate_usage(prompt, all_generated_tokens, tokenizer, start_time, prompt_eval_time)
                 yield response
@@ -154,7 +157,7 @@ class GenerationService:
             response["usage"] = self._calculate_usage(prompt, all_generated_tokens, tokenizer, *perf_timer)
 
             # KV Cacheの保存
-            if params.use_kv_cache and kv_cache is not None:
+            if gen_params.use_kv_cache and kv_cache is not None:
                 cached_tokens = tokenizer.encode(prompt) + all_generated_tokens
                 if cached_tokens[-1] in tokenizer.eos_token_ids:
                     cached_tokens = cached_tokens[:-1]
@@ -172,7 +175,7 @@ class GenerationService:
 
             yield response
 
-            if params.stream:
+            if gen_params.stream:
                 yield {"stream_done": True}
 
         except Exception as e:
@@ -238,28 +241,14 @@ class GenerationService:
         except Exception as e:
             yield from self._exception_response(e, "llama-cpp")
 
-    def _build_mlx_params(self) -> Dict[str, Any]:
-        default = self.default_gen_params
-        params = self.params
+    def _build_merged_params(self) -> CompletionParams:
+        # Start with model defaults (if any)
+        base_params = CompletionParams(**self.default_gen_params) if self.default_gen_params else CompletionParams()
 
-        fallbacks = {
-            'temperature': 1.0,
-            'max_tokens': 4096,
-            'logit_bias': None,
-            'repetition_penalty': None,
-            'repetition_context_size': 20,
-            'top_p': 1.0,
-            'tools': None,
-        }
-        result = {**default}
-        for k, v in fallbacks.items():
-            if k not in result:
-                result[k] = v
-        for k in result.keys():
-            val = getattr(params, k, None)
-            if val is not None:
-                result[k] = val
-        return result
+        # Update only with explicitly provided request parameters
+        return base_params.model_copy(
+            update={k: v for k, v in self.params if k in self.params.model_fields_set}
+        )
 
     def _check_stop(self, stop: List, tokens: List, tokenizer: Any) -> bool:
         if not stop:
