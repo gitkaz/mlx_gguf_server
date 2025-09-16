@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Header, HTTPException, Request, File, UploadFile, Form, Depends
+from fastapi import FastAPI, Header, HTTPException, Request, File, UploadFile, Form
 from fastapi.responses import Response, StreamingResponse, JSONResponse, FileResponse
 from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -9,10 +9,8 @@ import asyncio
 import json
 import os
 import time
-import psutil
-import uuid
 import uvicorn
-from typing import Union, Optional, Dict
+from typing import Optional
 from multiprocessing import Process, Queue, Manager
 
 import tts.kokoro_tts.run_process
@@ -173,6 +171,18 @@ async def post_process_clean_up(params: ProcessCleanParams, model_id: str = Head
     llm_process: LLMProcess = get_llm_process(model_id)
     llm_process.clean_queues(params.timeout)
     return {"process_clean_up": "success"}
+
+@app.get("/v1/models")
+# OpenAI API compatible API endpoint.
+# https://platform.openai.com/docs/api-reference/models/list
+def get_v1_models():
+    app.state.models = create_model_list()
+    model_names = list(app.state.models.keys())
+    model_names = sorted(model_names)
+    data = []
+    for model_name in model_names:
+        data.append({"id": model_name, "object": "model", "owned_by": "organization-owner"})
+    return {"object": "list", "data": data}
 
 
 @app.post("/v1/completions")

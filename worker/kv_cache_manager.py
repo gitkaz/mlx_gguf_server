@@ -86,7 +86,7 @@ class KVCacheManager:
         return cache, metadata
 
 
-    def _find_best_match_cache(self, all_metadata: Dict[str, Dict], prompt_tokens:List):
+    def _find_best_match_cache(self, model_name: str, all_metadata: Dict[str, Dict], prompt_tokens:List):
         """
 
         """
@@ -98,6 +98,10 @@ class KVCacheManager:
         # Check each cache file for the best token match
         for file_path, metadata in all_metadata.items():
             try:
+                #compare by model_name
+                if model_name != metadata["model_name"]:
+                    continue
+
                 # Load cache with metadata
                 cached_tokens = json.loads(metadata["tokens"])
                 if cached_tokens is None:
@@ -148,7 +152,7 @@ class KVCacheManager:
                 logger.info(f"deleted kv cache: {oldest_file}")
             self.clean_kv_cache()
 
-    def load_kv_cache(self, model, prompt_tokens: List):
+    def load_kv_cache(self, model, model_name: str, prompt_tokens: List):
         """
         Find the best matching KV cache by comparing token sequences (not message IDs)
 
@@ -170,7 +174,7 @@ class KVCacheManager:
             logger.debug(f"tokens = {tk}")
 
         # find best maatch (longest match) kv cache file for prompt_tokens
-        best_match = self._find_best_match_cache(all_metadata, prompt_tokens)
+        best_match = self._find_best_match_cache(model_name, all_metadata, prompt_tokens)
 
         # Process the best match
         if best_match["file_path"] is not None:
