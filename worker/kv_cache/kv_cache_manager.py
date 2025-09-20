@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 from typing import Dict, List
 from mlx_lm.models.cache import make_prompt_cache, save_prompt_cache, load_prompt_cache, can_trim_prompt_cache, trim_prompt_cache
-from .utils import get_dir_size, get_oldest_file
-from .logger_config import setup_logger
+from ..utils import get_dir_size, get_oldest_file
+from ..logger_config import setup_logger
 from .kv_cache_metadata import KVCacheMetadataStore
 
 log_level = os.environ.get("LOG_LEVEL", "INFO")
@@ -32,11 +32,11 @@ class KVCacheManager:
         return absolute path of kv_cache directory.
         """
         current_dir = Path(__file__).parent
-        return current_dir.joinpath(current_dir, 'kv_cache')
+        return current_dir.joinpath(current_dir, 'data')
 
     def _get_cache_files_list(self):
         """
-        gather kv_cache files (.safetensor files in worker/kv_cache directory).
+        gather kv_cache files (.safetensor files in worker/kv_cache/data directory).
           then sort the file list by modification time. newest first.
           then return sorted list.
         """

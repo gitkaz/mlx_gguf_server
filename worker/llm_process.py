@@ -6,11 +6,11 @@ from mlx_lm.models.cache import load_prompt_cache
 
 from .task_response import TaskResponse
 from .llm_model import LLMModel
-from .model_loader import ModelLoader
+from .task.load.model_loader import ModelLoader
 from .tokenizer_service import TokenizerService
-from .generation_service import GenerationService
-from .kv_cache_metadata import KVCacheMetadataStore
-from .kv_cache_manager import KVCacheManager
+from .task.completions_stream.generation_service import GenerationService
+from .kv_cache.kv_cache_metadata import KVCacheMetadataStore
+from .kv_cache.kv_cache_manager import KVCacheManager
 from .logger_config import setup_logger
 
 log_level = os.environ.get("LOG_LEVEL", "INFO")

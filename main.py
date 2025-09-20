@@ -11,7 +11,7 @@ import os
 import time
 import uvicorn
 from typing import Optional
-from multiprocessing import Process, Queue, Manager
+from multiprocessing import Process, Queue
 
 import tts.kokoro_tts.run_process
 import embedding.run_process

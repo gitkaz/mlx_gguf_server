@@ -5,15 +5,14 @@ import time
 import json
 from mlx_lm.sample_utils import make_sampler, make_logits_processors
 from transformers import PreTrainedTokenizer
-from .kv_cache_manager import KVCacheManager
-from .tokenizer_service import TokenizerService
-from .llm_model import LLMModel
+from ...kv_cache.kv_cache_manager import KVCacheManager
+from ...tokenizer_service import TokenizerService
+from ...llm_model import LLMModel
 from schemas import CompletionParams
 
+from ...task_response import TaskResponse
 
-from .task_response import TaskResponse
-
-from .logger_config import setup_logger
+from ...logger_config import setup_logger
 
 log_level = os.environ.get("LOG_LEVEL", "INFO")
 logger = setup_logger(__name__, level=log_level)
