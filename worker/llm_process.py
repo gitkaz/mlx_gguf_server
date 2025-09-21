@@ -6,9 +6,10 @@ from mlx_lm.models.cache import load_prompt_cache
 
 from .task_response import TaskResponse
 from .llm_model import LLMModel
-from .task.load.model_loader import ModelLoader
-from .tokenizer_service import TokenizerService
+from .task.debug_info.debug_info import DebugInfo
 from .task.completions_stream.generation_service import GenerationService
+from .task.load.model_loader import ModelLoader
+from .task.token_count.tokenizer_service import TokenizerService
 from .kv_cache.kv_cache_metadata import KVCacheMetadataStore
 from .kv_cache.kv_cache_manager import KVCacheManager
 from .logger_config import setup_logger
@@ -19,6 +20,7 @@ logger = setup_logger(__name__, level=log_level)
 async def start_llm_process(request_queue: Queue, response_queue: Queue):
     logger.info(f"start llm process. log_level={log_level}")
     model = LLMModel()
+    debug_info = DebugInfo()
 
     # Create PERSISTENT metadata store (lives for process lifetime)
     metadata_store = KVCacheMetadataStore()
@@ -37,6 +39,9 @@ async def start_llm_process(request_queue: Queue, response_queue: Queue):
         else:
             task, request_id, params = item
             logger.debug(f"debug: new request: {task=}, {request_id=}, {params=}")
+
+            debug_info.set(task_id=request_id, task_category=task, params=params)
+
         try:
             if task == 'load':
                 loader = ModelLoader()
@@ -47,11 +52,14 @@ async def start_llm_process(request_queue: Queue, response_queue: Queue):
                 result = tokenizer_service.count_tokens(model, params)
 
             elif task == 'completions_stream':
-                generator = GenerationService(model, params, cache_manager=KVCacheManager(metadata_store))
+                generator = GenerationService(model, params, cache_manager=KVCacheManager(metadata_store), debug_info=debug_info)
                 for response in generator.generate_completion():
                     task_response = TaskResponse.create(200, response)
                     response_queue.put((request_id, task_response.to_json()))
-                continue  # ストリーミングのためcontinue
+                continue
+
+            elif task == 'debug_latest':
+                result = debug_info.get()
 
             assert_task_response(result)
             response_queue.put((request_id, result.to_json()))
