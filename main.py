@@ -1,6 +1,8 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Header, HTTPException, Request, File, UploadFile, Form
-from fastapi.responses import Response, StreamingResponse, JSONResponse, FileResponse
+from fastapi.responses import Response, StreamingResponse, JSONResponse, FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -76,7 +78,8 @@ async def lifespan(app: FastAPI):
     logger.info("stopping....")
 
 app = FastAPI(lifespan=lifespan)
-
+app.mount("/webui/static", StaticFiles(directory="webui/static"), name="static")
+templates = Jinja2Templates(directory="webui/templates")
 
 def init_task_scheduler():
     scheduler = BackgroundScheduler()
@@ -151,6 +154,10 @@ def create_llm_process(model_id: str) -> LLMProcess:
     llm_process.start()
     return llm_process
 
+@app.get("/webui", response_class=HTMLResponse)
+async def webui(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
+
 @app.get("/management/processes")
 async def get_management_processes():
     processes_info = {}
@@ -183,6 +190,7 @@ async def get_debug_info(model_id: str = Header(default="0", alias="X-Model-Id")
         return response
     else: 
         raise HTTPException(status_code=status_code, detail=response)
+
 
 @app.get("/v1/models")
 # OpenAI API compatible API endpoint.
@@ -447,7 +455,7 @@ async def import_kv_cache(session_id: str, file: UploadFile):
     """
     Import a KV Cache file for a specific session with strict validation.
     Uploaded KV Cache file must be safetensors file or gz compressed safetensors.
-    Uploaded KV Cache filename must be <UUIDv4>.safetensors or <UUIDv4>.safetensors.gz. This UUID is used as session_id
+    Uploaded KV Cache filename must be <UUIDv4>.safetensors or <UUIDv4>.safetensors.gz.
     """
     upload_file_path = None
     temp_dir = None

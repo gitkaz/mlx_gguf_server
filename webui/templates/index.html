@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>mlx_gguf_server Management</title>
+    <link rel="stylesheet" href="/webui/static/css/style.css">
+    <script src="https://unpkg.com/htmx.org@1.9.6"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.6/dist/ext/json-enc.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>mlx_gguf_server Management UI</h1>
+        </header>
+
+        <main>
+            <!-- Model Loader Section -->
+            <section class="card">
+                <h2>Load New Model</h2>
+                <form id="load-model-form" class="model-loader-form">
+                    <div class="form-group">
+                        <label for="model-select">Available Models:</label>
+                        <select id="model-select">
+                            <option>Loading models...</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="model-id">Model ID:</label>
+                        <input type="number" id="model-id" value="0" min="0" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" name="use_kv_cache" checked>
+                            Enable KV Cache by default
+                        </label>
+                        <small>Will be used as default for this model</small>
+                    </div>
+
+                    <button type="submit" class="btn primary">Load Model</button>
+                </form>
+                <div id="load-response" class="response-area"></div>
+            </section>
+
+            <!-- Model Management Section -->
+            <section class="card">
+                <h2>Loaded Models</h2>
+                <div id="loaded-models" hx-get="/management/processes" hx-trigger="load, every 10s" hx-on::after-request="handleProcessManagentResponse(event)">
+                    <div class="loading">Loading models...</div>
+                </div>
+            </section>
+
+            <!-- KV Cache Section -->
+            <!-- This section will be implemented after KV Cache Information Service (New Tasks) are implemented.
+            <section class="card">
+                <h2>KV Cache Management</h2>
+                <div hx-get="/management/kv-cache" hx-trigger="load, every 10s" hx-swap="innerHTML">
+                    <div class="loading">Loading cache stats...</div>
+                </div>
+            </section>
+            -->
+        </main>
+
+        <footer>
+            <p>mlx_gguf_server Management UI • <span id="current-time"></span></p>
+        </footer>
+    </div>
+
+    <script src="/webui/static/js/main.js"></script>
+</body>
+</html>
+
