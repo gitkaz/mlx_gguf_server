@@ -5,12 +5,13 @@ import time
 import json
 from mlx_lm.sample_utils import make_sampler, make_logits_processors
 from transformers import PreTrainedTokenizer
-from ...kv_cache.kv_cache_manager import KVCacheManager
-from ...tokenizer_service import TokenizerService
-from ...llm_model import LLMModel
-from schemas import CompletionParams
 
+from ...llm_model import LLMModel
+from ...task.debug_info.debug_info import DebugInfo
+from ...task.token_count.tokenizer_service import TokenizerService
 from ...task_response import TaskResponse
+from ...kv_cache.kv_cache_manager import KVCacheManager
+from schemas import CompletionParams
 
 from ...logger_config import setup_logger
 
@@ -24,9 +25,10 @@ class GenerationService:
     LLMModelから委譲されて、生成処理を実行する。
     """
 
-    def __init__(self, llm_model: LLMModel, params: Any, cache_manager: KVCacheManager):
+    def __init__(self, llm_model: LLMModel, params: Any, cache_manager: KVCacheManager, debug_info: DebugInfo):
         self.tokenizer_service = TokenizerService()
-        self.kvcache_manager = cache_manager or KVCacheManager()
+        self.kvcache_manager = cache_manager
+        self.debug_info = debug_info
 
         if not isinstance(llm_model, LLMModel):
             raise TypeError("First argument must be LLMModel instance")
@@ -65,7 +67,6 @@ class GenerationService:
         model = self.model
         model_name = self.model_name
         tokenizer = self.tokenizer
-        params = self.params
 
         # パラメータの統合
         gen_params = self._build_merged_params()
@@ -86,7 +87,7 @@ class GenerationService:
         kv_cache_metadata = {}
 
         try:
-            # create pompt_tokens based on value of params.apply_chat_template
+            # create prompt_tokens
             if gen_params.apply_chat_template:
                 messages = gen_params.messages
 
@@ -105,11 +106,19 @@ class GenerationService:
             if gen_params.use_kv_cache:
                 kv_cache, start_index, kv_load_stats = self.kvcache_manager.load_kv_cache(model, model_name, prompt_tokens)
                 prompt_tokens = prompt_tokens[start_index:]
+                self.debug_info.set(kv_cache = kv_load_stats)
 
 
             # generate text based on prompt_tokens and kv_cache (if params.use_kv_cache is True)
             start_time = time.perf_counter()
             is_first_token = True
+
+            self.debug_info.set(
+                stream_generate = {
+                    "model": self.model_name, 
+                    "prompt": self.tokenizer.decode(prompt_tokens)
+                }
+            )
 
             for item in stream_generate(
                 model=model,

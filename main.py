@@ -172,6 +172,15 @@ async def post_process_clean_up(params: ProcessCleanParams, model_id: str = Head
     llm_process.clean_queues(params.timeout)
     return {"process_clean_up": "success"}
 
+@app.get("/management/debug/latest")
+async def get_debug_info(model_id: str = Header(default="0", alias="X-Model-Id")):
+    llm_process: LLMProcess = get_llm_process(model_id)
+    status_code, response = await llm_process.task_request('debug_latest', params=None)
+    if status_code == 200:
+        return response
+    else: 
+        raise HTTPException(status_code=status_code, detail=response)
+
 @app.get("/v1/models")
 # OpenAI API compatible API endpoint.
 # https://platform.openai.com/docs/api-reference/models/list
