@@ -57,6 +57,7 @@ models/
 adapters/
 whisper_stt/uploads
 worker/kv_cache/data/*
+!workder/kv_cache/data/.gitkeep
 
 # Exclude all .gitkeep file
 !**/.gitkeep

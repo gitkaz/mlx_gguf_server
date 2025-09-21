@@ -130,7 +130,8 @@ class KVCacheManager:
         save_prompt_cache(file_name=filepath, cache=kv_cache, metadata=metadata)
         # Update metadata store
         self.metadata_store.add(filepath, metadata)
-
+        # set file as read-only
+        os.chmod(filepath, 0o444)
 
     def clean_kv_cache(self):
         """
