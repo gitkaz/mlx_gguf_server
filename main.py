@@ -62,11 +62,14 @@ async def lifespan(app: FastAPI):
 
     app.state.tmpdir = "temp"
     app.state.models = create_model_list()
+    app.state.loaded_models = {}
+
     # Initialize adapters list
     try:
         app.state.adapters = create_adapter_list()
     except Exception:
         app.state.adapters = {}
+
     app.state.llm_processes = {}
     init_task_scheduler()
     yield
@@ -183,10 +186,10 @@ async def get_debug_info(model_id: str = Header(default="0", alias="X-Model-Id")
 
 @app.get("/v1/models")
 # OpenAI API compatible API endpoint.
+# Return only loaded models.
 # https://platform.openai.com/docs/api-reference/models/list
 def get_v1_models():
-    app.state.models = create_model_list()
-    model_names = list(app.state.models.keys())
+    model_names = list(app.state.loaded_models.keys())
     model_names = sorted(model_names)
     data = []
     for model_name in model_names:
@@ -197,7 +200,6 @@ def get_v1_models():
 @app.post("/v1/completions")
 @app.post("/v1/chat/completions")
 async def post_completion(request:Request, params: CompletionParams, model_id: str = Header(default="0", alias="X-Model-Id")):
-    llm_process: LLMProcess = get_llm_process(model_id)
 
     if request.url.path == "/v1/completions" and params.prompt == "":
         raise HTTPException(status_code=400, detail="/v1/completions needs prompt string")
@@ -206,6 +208,14 @@ async def post_completion(request:Request, params: CompletionParams, model_id: s
 
     if request.url.path == "/v1/chat/completions":
         params.apply_chat_template = True
+
+    if "X-Model-Id" not in request.headers and hasattr(params, "model") and params.model:
+        if params.model in app.state.loaded_models:
+            model_id = app.state.loaded_models[params.model]
+        else:
+            raise HTTPException(status_code=400, detail=f"Model '{params.model}' not exist.")
+
+    llm_process: LLMProcess = get_llm_process(model_id)
 
     if params.stream:
         async def stream_completion():
@@ -250,8 +260,11 @@ def get_v1_internal_model_list():
 @app.post("/v1/internal/model/unload")
 def post_model_unload(model_id: str = Header(default="0", alias="X-Model-Id")):
     llm_process: LLMProcess = get_llm_process(model_id)
+    model_name = llm_process.model_info.get("model_name")
+ 
     success, message =  terminate_llm_process(model_id)
     if success:
+        del app.state.loaded_models[model_name]
         return {"unload": "success"}
     else:
         raise HTTPException(status_code=500, detail=f"Unload model failed. {message=}")
@@ -263,6 +276,8 @@ def post_model_load(params: ModelLoadParams, model_id: str = Header(default="0",
  
     if model_name not in app.state.models:
         raise HTTPException(status_code=400, detail=f"Error: {model_name} not found.")
+    if model_name in app.state.loaded_models:
+        raise HTTPException(status_code=400, detail=f"Error: {model_name} already loaded at {app.state.loaded_models[model_name]}.")
     if app.state.llm_processes.get(model_id):
         raise HTTPException(status_code=400, detail=f"Error: model_id {model_id} already exists. Unload first.")
 
@@ -287,6 +302,7 @@ def post_model_load(params: ModelLoadParams, model_id: str = Header(default="0",
     status_code, response = asyncio.run(llm_process.task_request('load', params))
     if status_code == 200:
         llm_process.model_info = response
+        app.state.loaded_models[model_name] = model_id
         return {"load": "success"}
     else: 
         success, message = terminate_llm_process(model_id)
