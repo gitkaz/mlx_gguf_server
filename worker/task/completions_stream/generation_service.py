@@ -3,6 +3,7 @@ import os
 import uuid
 import time
 import json
+import logging
 from mlx_lm.sample_utils import make_sampler, make_logits_processors
 from transformers import PreTrainedTokenizer
 
@@ -102,10 +103,43 @@ class GenerationService:
                 prompt = gen_params.prompt
                 prompt_tokens = tokenizer.encode(prompt)
 
-            # load kv cache based on prompt_tokens
+            # prompt_tokens based load kv cache
             if gen_params.use_kv_cache:
-                kv_cache, start_index, kv_load_stats = self.kvcache_manager.load_kv_cache(model, model_name, prompt_tokens)
-                prompt_tokens = prompt_tokens[start_index:]
+                kv_cache, start_index, kv_load_stats = self.kvcache_manager.load_kv_cache(model_name, prompt_tokens)
+
+                # Cache hit by prompt_tokens based load_kv_cache
+                if kv_cache is not None:
+                    prompt_tokens = prompt_tokens[start_index:]
+
+                # Cache hit failed by prompt_tokens based load_kv_cache
+                else:
+                    logger.debug(f"kv cache hit failed by prompt tokens based load_kv_cache.")
+
+                    # If the request is /v1/chat/completions (messages), fallback to meessage_id based load_kv_cache
+                    if gen_params.apply_chat_template: 
+                        kv_cache, message_index, kv_load_stats, tokens_in_metadata = self.kvcache_manager.load_kv_cache_by_message_id(model_name, messages)
+
+                        # Cache hit by message_id based load_kv_cache
+                        if kv_cache is not None:
+                            trimmed_prompt = self.tokenizer_service.apply_chat_template(
+                                tokenizer=tokenizer,
+                                messages=messages[message_index:],
+                                add_generation_prompt=True,
+                                tools=gen_params.tools
+                            )
+                            trimmed_prompt_tokens = tokenizer.encode(trimmed_prompt)
+                            
+                            if logger.isEnabledFor(logging.DEBUG):
+                                logger.debug(f"{tokenizer.decode(prompt_tokens)=}")
+                                logger.debug(f"{tokenizer.decode(tokens_in_metadata)=}")
+                                logger.debug(f"{tokenizer.decode(trimmed_prompt_tokens)=}")
+                            prompt_tokens = trimmed_prompt_tokens
+
+                # if use_kv_cache is enabled and kv_cache is not hit, create a new cache
+                if kv_cache is None:
+                    logger.info(f"kv cache hit failed.create a new cache file.")
+                    kv_cache, kv_load_stats = self.kvcache_manager.make_new_cache(model)
+
                 self.debug_info.set(kv_cache = kv_load_stats)
 
 
