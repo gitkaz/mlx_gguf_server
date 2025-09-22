@@ -10,7 +10,9 @@ import argparse
 import asyncio
 import json
 import os
+from pathlib import Path
 import time
+import uuid
 import uvicorn
 from typing import Optional
 from multiprocessing import Process, Queue
@@ -22,7 +24,7 @@ from core.process_manager import LLMProcess
 from schemas import CompletionParams, TokenCountParams, ModelLoadParams, ProcessCleanParams, KokoroTtsParams, EmbeddingsParams
 from embedding.embedding_schemas import OpenAICompatibleEmbeddings
 from utils.utils import create_model_list, create_adapter_list
-from utils.kv_cache_utils import prepare_temp_dir, validate_session_id, validate_filename, process_upload_file
+from utils.kv_cache_utils import prepare_temp_dir, validate_filename, process_upload_file, get_kv_cache_abs_path
 from whisper_stt.whisper import AudioTranscriber
 # from logging import getLogger
 import logging
@@ -62,7 +64,6 @@ async def lifespan(app: FastAPI):
     access_logger.addHandler(file_handler)
     # =====================================================
 
-    app.state.tmpdir = "temp"
     app.state.models = create_model_list()
     app.state.loaded_models = {}
 
@@ -84,7 +85,8 @@ templates = Jinja2Templates(directory="webui/templates")
 def init_task_scheduler():
     scheduler = BackgroundScheduler()
     scheduler.add_job(recurring_task_cleanup, 'interval', minutes=5)
-    scheduler.start()        
+    logging.getLogger('apscheduler.executors.default').setLevel(logging.WARNING)
+    scheduler.start()
 
 
 def recurring_task_cleanup():
@@ -416,23 +418,20 @@ async def post_embeddings(params: EmbeddingsParams):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error at embedding: {str(e)}")
 
-@app.get("/v1/internal/model/kv_cache/export/{session_id}")
-async def export_kv_cache(session_id: str):
+@app.get("/v1/internal/model/kv_cache/export/{kvcache_id}")
+async def export_kv_cache(kvcache_id: str):
     """
     Export a KV Cache file with optional compression.
     """
-    # Validate Session ID is UUIDv4
-    validate_session_id(session_id=session_id)
+    cache_dir = Path(os.environ["KV_CACHE_PATH"])
+    file_path = cache_dir.joinpath(f"{kvcache_id}.safetensors")
 
-    cache_dir = "llm_process/kv_cache/"
-    file_path = os.path.join(cache_dir, f"{session_id}.safetensors")
-
-    if not os.path.exists(file_path):
+    if not file_path.exists():
         raise HTTPException(404, "Cache file not found")
 
     response_path = file_path
     media_type = "application/octet-stream"
-    filename = f"{session_id}.safetensors"
+    filename = f"{kvcache_id}.safetensors"
 
     return FileResponse(
         path=response_path,
@@ -441,6 +440,58 @@ async def export_kv_cache(session_id: str):
     )
 
 
+@app.post("/v1/internal/model/kv_cache/import")
+async def import_kv_cache(file: UploadFile):
+    """
+    Import a KV Cache file.
+    KV Cache file must be safetensors file or gz compressed safetensors.
+    """
+    upload_file_path = Path()
+    temp_dir = Path()
+
+    try:
+        # Validate inputs
+        filename = getattr(file, 'filename', '') or ''
+        validate_filename(filename=filename)
+
+        # Create temporary directory inside llm_process/kv_cache/tmp/
+        temp_dir: Path = prepare_temp_dir()
+        temporary_upload_file_path = temp_dir.joinpath(filename)
+
+        # process uploaded file
+        temporary_upload_file_path = await process_upload_file(file=file, file_path=temporary_upload_file_path)
+
+        # Save to target location
+        cache_dir = Path(os.environ["KV_CACHE_PATH"])
+        cache_id = str(uuid.uuid4())
+        target_path = cache_dir.joinpath(f"{cache_id}.safetensors")
+        temporary_upload_file_path.rename(target_path)
+        target_path.chmod(0o444)
+
+        return {"status": "success", "message": f"Cache file imported", "cache_id": cache_id}
+
+    except Exception as e:
+        # Clean up temporary files on error
+        if upload_file_path.exists():
+            try:
+                upload_file_path.unlink()
+            except OSError:
+                pass
+        if temp_dir.exists():
+            try:
+                temp_dir.rmdir()
+            except OSError:
+                pass
+        raise HTTPException(500, str(e)) from e
+
+    finally:
+        # Ensure temporary directory is removed
+        if temp_dir.exists():
+            try:
+                temp_dir.rmdir()
+            except OSError:
+                pass
+
 @app.get("/v1/internal/adapter/list")
 def get_v1_internal_adapter_list():
     """Return the scanned adapter list (only name and size; do not expose filesystem paths)."""
@@ -448,58 +499,6 @@ def get_v1_internal_adapter_list():
     adapter_entries = list(app.state.adapters.values())
     adapter_entries = sorted(adapter_entries, key=lambda x: x["name"])
     return {"adapters": adapter_entries}
-
-
-@app.post("/v1/internal/model/kv_cache/import/{session_id}")
-async def import_kv_cache(session_id: str, file: UploadFile):
-    """
-    Import a KV Cache file for a specific session with strict validation.
-    Uploaded KV Cache file must be safetensors file or gz compressed safetensors.
-    Uploaded KV Cache filename must be <UUIDv4>.safetensors or <UUIDv4>.safetensors.gz.
-    """
-    upload_file_path = None
-    temp_dir = None
-    try:
-        # Validate inputs
-        validate_session_id(session_id=session_id)
-        filename = getattr(file, 'filename', '') or ''
-        validate_filename(session_id=session_id, filename=filename)
-
-        # Create temporary directory inside llm_process/kv_cache/tmp/
-        temp_dir = prepare_temp_dir(tmp_base_dir=app.state.tmpdir)
-        upload_file_path = os.path.join(temp_dir, filename)
-
-        # process uploaded file
-        upload_file_path = await process_upload_file(file=file, file_path=upload_file_path)
-
-        # Save to target location
-        cache_dir = "llm_process/kv_cache/"
-        target_path = os.path.join(cache_dir, f"{session_id}.safetensors")
-        os.rename(upload_file_path, target_path)
-
-        return {"status": "success", "message": f"Cache {session_id} imported"}
-
-    except Exception as e:
-        # Clean up temporary files on error
-        if upload_file_path and os.path.exists(upload_file_path):
-            try:
-                os.remove(upload_file_path)
-            except OSError:
-                pass
-        if temp_dir and os.path.exists(temp_dir):
-            try:
-                os.rmdir(temp_dir)
-            except OSError:
-                pass
-        raise HTTPException(500, str(e)) from e
-
-    finally:
-        # Ensure temporary directory is removed
-        if temp_dir and os.path.exists(temp_dir):
-            try:
-                os.rmdir(temp_dir)
-            except OSError:
-                pass
 
 
 def parse_arguments():
@@ -530,5 +529,6 @@ if __name__ == "__main__":
 
     os.environ["MAX_KV_SIZE_GB"] = str(args.max_kv_size)
     os.environ["LOG_LEVEL"]      = args.log_level.upper()
+    os.environ["KV_CACHE_PATH"]  = get_kv_cache_abs_path()
 
     uvicorn.run(app, host=args.addr, port=args.port, access_log=True, log_level=args.log_level)

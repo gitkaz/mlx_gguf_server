@@ -31,8 +31,7 @@ class KVCacheManager:
         """
         return absolute path of kv_cache directory.
         """
-        current_dir = Path(__file__).parent
-        return current_dir.joinpath(current_dir, 'data')
+        return os.environ["KV_CACHE_PATH"]
 
     def _get_cache_files_list(self):
         """
@@ -76,12 +75,16 @@ class KVCacheManager:
             cached_tokens = []
 
         # if common_len < lan(cached_tokens), cache is needed to be trimmed.
-        if prefix_len < len(cached_tokens):
+        if 0 < prefix_len and prefix_len < len(cached_tokens):
+            logger.debug(f"{prefix_len=}, {len(cached_tokens)=}. Try to trim cache file: {Path(file_path).name}")
             if can_trim_prompt_cache(cache):
                 # 2025/09/10. mlx-0.29.0 and mlx_lm-0.27.0
                 # as far as I tested, trim_len need to be add 1... (not sure why... orz)
                 trim_len = len(cached_tokens) - prefix_len +1
                 trim_prompt_cache(cache, trim_len)
+                logger.debug(f"{Path(file_path).name} was trimmed {trim_len} tokens.")
+            else:
+                logger.warning(f"Cache file {Path(file_path).name} is not able to trim.")
 
         return cache, metadata
 
