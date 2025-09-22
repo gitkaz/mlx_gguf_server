@@ -182,7 +182,7 @@ class KVCacheManager:
         all_metadata = self.metadata_store.get_all_metadata()
 
         for reversed_index, message in enumerate(reversed(messages)):
-            if "meessage_id" not in message:
+            if "message_id" not in message:
                 continue
 
             expect_file_name = f'{message["message_id"]}.safetensors'
