@@ -135,7 +135,7 @@ class GenerationService:
 
                 # if use_kv_cache is enabled and kv_cache is not hit, create a new cache
                 if kv_cache is None:
-                    logger.info(f"kv cache hit failed. create a new cache file.")
+                    logger.info(f"kv cache hit failed. create a new kv cache.")
                     kv_cache, kv_load_stats = self.kvcache_manager.make_new_cache(model)
 
                 self.debug_info.set(kv_cache = kv_load_stats)
@@ -198,20 +198,24 @@ class GenerationService:
 
             # KV Cacheの保存
             if gen_params.use_kv_cache and kv_cache is not None:
-                cached_tokens = tokenizer.encode(prompt) + all_generated_tokens
-                if cached_tokens[-1] in tokenizer.eos_token_ids:
-                    cached_tokens = cached_tokens[:-1]
+                should_save = (len(prompt_tokens) > gen_params.kv_cache_threshold)
+                if should_save:
+                    logger.debug(f"prompt_token lengh ({len(prompt_tokens)}) overed the threashold ({gen_params.kv_cache_threshold}). save kv cache.")
 
-                kv_cache_metadata["model_name"] = str(model_name)
-                kv_cache_metadata["chat_template"] = str(tokenizer.chat_template)
-                kv_cache_metadata["tokens"] = json.dumps(cached_tokens)
-                kv_cache_metadata["token_count"] = str(len(cached_tokens))
-                self.kvcache_manager.save_kv_cache(message_id=request_id, kv_cache=kv_cache, metadata=kv_cache_metadata)
+                    cached_tokens = tokenizer.encode(prompt) + all_generated_tokens
+                    if cached_tokens[-1] in tokenizer.eos_token_ids:
+                        cached_tokens = cached_tokens[:-1]
 
-                response["usage"]["kv_cache"] = {
-                    "cached_tokens": kv_cache_metadata["token_count"],
-                    "stats": kv_load_stats
-                }
+                    kv_cache_metadata["model_name"] = str(model_name)
+                    kv_cache_metadata["chat_template"] = str(tokenizer.chat_template)
+                    kv_cache_metadata["tokens"] = json.dumps(cached_tokens)
+                    kv_cache_metadata["token_count"] = str(len(cached_tokens))
+                    self.kvcache_manager.save_kv_cache(message_id=request_id, kv_cache=kv_cache, metadata=kv_cache_metadata)
+
+                    response["usage"]["kv_cache"] = {
+                        "cached_tokens": kv_cache_metadata["token_count"],
+                        "stats": kv_load_stats
+                    }
 
             yield response
 

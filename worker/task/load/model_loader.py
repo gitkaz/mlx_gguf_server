@@ -119,7 +119,7 @@ class ModelLoader:
         llm_model.default_gen_params = {}
         relevant_params = [
             "temperature", "max_tokens", "logit_bias",
-            "repetition_penalty", "repetition_context_size", "top_p", "use_kv_cache"
+            "repetition_penalty", "repetition_context_size", "top_p", "use_kv_cache", "kv_cache_threshold"
         ]
 
         for param_name in relevant_params:
