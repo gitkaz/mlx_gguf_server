@@ -17,8 +17,9 @@ class CompletionParams(BaseModel):
     logit_bias: Optional[Dict[int, float]] = None # mlx only
     repetition_penalty: Optional[float] = None    # mlx only
     repetition_context_size: Optional[int] = 20   # mlx only
-    use_kv_cache: bool = False          # mlx only
-    tools: Optional[list] = None        # mlx only
+    use_kv_cache: bool = False                    # mlx only
+    kv_cache_threshold: Optional[int] = 5000      # mlx only  
+    tools: Optional[list] = None                  # mlx only
     top_k: int = 0                      # llama-cpp only
     min_p: float = 0.05                 # llama-cpp only
     typical_p: float = 1.0              # llama-cpp only
@@ -63,6 +64,7 @@ class ModelLoadParams(BaseModel):
     repetition_context_size: Optional[int] = None
     top_p: Optional[float] = None
     use_kv_cache: Optional[bool] = None
+    kv_cache_threshold: Optional[int] = None
 
 class ProcessCleanParams(BaseModel):
     timeout: int
