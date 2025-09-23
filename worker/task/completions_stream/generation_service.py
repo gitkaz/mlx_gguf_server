@@ -22,8 +22,8 @@ logger = setup_logger(__name__, level=log_level)
 
 class GenerationService:
     """
-    LLMのテキスト生成 (completions_stream) を専門に行うサービス。
-    LLMModelから委譲されて、生成処理を実行する。
+    A service that specializes in LLM text generation (completions_stream).
+    Delegated from LLMModel, it performs the generation process.
     """
 
     def __init__(self, llm_model: LLMModel, params: Any, cache_manager: KVCacheManager, debug_info: DebugInfo):
@@ -43,9 +43,6 @@ class GenerationService:
 
 
     def generate_completion(self) -> Generator[Dict[str, Any], None, None]:
-        """
-        テキスト生成を実行。stream対応。
-        """
 
         def exception_response(e: Exception, source: str) -> Generator[Dict[str, Any], None, None]:
             error_msg = f"Error in GenerationService.generate_completion ({source}): {str(e)}"
@@ -117,6 +114,7 @@ class GenerationService:
 
                     # If the request is /v1/chat/completions (messages), fallback to meessage_id based load_kv_cache
                     if gen_params.apply_chat_template: 
+                        logger.debug(f"try to load kv cache based on message_id.")
                         kv_cache, message_index, kv_load_stats, tokens_in_metadata = self.kvcache_manager.load_kv_cache_by_message_id(model_name, messages)
 
                         # Cache hit by message_id based load_kv_cache
@@ -137,7 +135,7 @@ class GenerationService:
 
                 # if use_kv_cache is enabled and kv_cache is not hit, create a new cache
                 if kv_cache is None:
-                    logger.info(f"kv cache hit failed.create a new cache file.")
+                    logger.info(f"kv cache hit failed. create a new cache file.")
                     kv_cache, kv_load_stats = self.kvcache_manager.make_new_cache(model)
 
                 self.debug_info.set(kv_cache = kv_load_stats)

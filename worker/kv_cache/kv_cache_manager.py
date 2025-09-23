@@ -57,7 +57,9 @@ class KVCacheManager:
         calculate length of common tokens between cache_tokens and prompt_tokens.
         """
         common_len = 0
-        min_len = min(len(cached_tokens), len(prompt_tokens))
+
+        # for safety, max of common_len should be shorter than length of prompt_tokens.
+        min_len = min(len(cached_tokens), len(prompt_tokens)-1)
         for i in range(min_len):
             if cached_tokens[i] != prompt_tokens[i]:
                 break
@@ -68,31 +70,39 @@ class KVCacheManager:
 
     def _load_best_match_cache(self, file_path: str, common_len: int):
         cache, metadata = load_prompt_cache(file_path, return_metadata=True)
+        cache_file_name = Path(file_path).name
 
         try:
             cached_tokens = json.loads(metadata.get("tokens", "[]"))
         except:
-            logger.error(f"KV Cache {os.path.basename(file_path)} failed to load metadata.")
-            cached_tokens = []
+            logger.error(f"KV Cache file {cache_file_name} failed to load metadata.")
+            return None, None
 
         # if common_len < lan(cached_tokens), cache is needed to be trimmed.
-        if 0 < common_len and common_len < len(cached_tokens):
-            logger.debug(f"{common_len=}, {len(cached_tokens)=}. Try to trim cache file: {Path(file_path).name}")
+        if common_len < len(cached_tokens):
+            logger.debug(f"{common_len=}, {len(cached_tokens)=}. Try to trim cache file: {cache_file_name}")
+
             if can_trim_prompt_cache(cache):
                 # 2025/09/10. mlx-0.29.0 and mlx_lm-0.27.0
                 # as far as I tested, trim_len need to be add 1... (not sure why... orz)
                 trim_len = len(cached_tokens) - common_len +1
                 trim_prompt_cache(cache, trim_len)
-                logger.debug(f"{Path(file_path).name} was trimmed {trim_len} tokens.")
+                logger.debug(f"{cache_file_name} was trimmed {trim_len} tokens.")
             else:
-                logger.warning(f"Cache file {Path(file_path).name} is not able to trim.")
+                logger.error(f"KV Cache file {cache_file_name} is not able to trim.")
+                return None, None
 
         return cache, metadata
 
 
     def _find_best_match_cache(self, model_name: str, all_metadata: Dict[str, Dict], prompt_tokens:List):
         """
-
+        Searches for the KV Cache file to load.
+        Conditions
+        * Model name must match (KV Caches generated from other models cannot be used).
+        * The current prompt must match the prompt recorded in the KV Cache from the beginning. This can be an exact match or a partial match.
+        - A partial match requires trimming the KV Cache upon loading, so this is only allows for trimmable models.
+        - Also obtains the token length (common_len) of the matching portion.
         """
         best_match = {
             "common_len": 0,
@@ -106,20 +116,22 @@ class KVCacheManager:
                 if model_name != metadata["model_name"]:
                     continue
 
-                # Load cache with metadata
-                cached_tokens = json.loads(metadata["tokens"])
-                if cached_tokens is None:
+                # Load cache with metadata. If load failed, go to next kv cache file.
+                try:
+                    cached_tokens = json.loads(metadata["tokens"])
+                except:
                     continue
 
                 # Calculate common prefix length
                 common_len = self._calc_common_length(cached_tokens, prompt_tokens)
 
-                # If common tokens exist but it is shorter than cached_tokens, then cache needs to be trimmed.
-                if 0 < common_len and common_len < len(cached_tokens):
+                # If common tokens is shorter than cached_tokens, then cache needs to be trimmed.
+                if common_len < len(cached_tokens):
                     if metadata.get("trimmable") and metadata["trimmable"] == "False":
                         continue
 
-                if (best_match["common_len"] < common_len and common_len < len(prompt_tokens)):
+                # update the best_match in case if it is the longest matched cache with prompt_tokens.
+                if (best_match["common_len"] < common_len):
                     best_match.update({
                         "common_len": common_len,
                         "file_path": file_path,
@@ -231,10 +243,13 @@ class KVCacheManager:
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("check all_metadata")
             for fp, md in all_metadata.items():
-                logger.debug(f"filename = {fp}")
+                logger.debug(f"filename = {fp}, model_name={md['model_name']}, trimmable={md['trimmable']}")
                 tk = json.loads(md["tokens"])
                 logger.debug(f"length of tokens={len(tk)}")
-                logger.debug(f"tokens = {tk}")
+                if len(tk) > 200:
+                    logger.debug(f"tokens = {tk[:100]}..{tk[-100:]}")
+                else:
+                    logger.debug(f"tokens = {tk}")
 
         # find best maatch (longest match) kv cache file for prompt_tokens
         best_match = self._find_best_match_cache(model_name, all_metadata, prompt_tokens)
@@ -248,14 +263,16 @@ class KVCacheManager:
             load_start_time = time.time()
             cache, metadata = self._load_best_match_cache(best_match["file_path"], best_match["common_len"])
             load_time = time.time() - load_start_time
-            
-            kv_load_stats = {"filename": os.path.basename(best_match["file_path"]),
-                             "size": os.stat(best_match["file_path"]).st_size,
-                             "load_time": load_time
-                             }
 
-            logger.debug(f"{kv_load_stats=}")
-            return (cache, best_match["common_len"], kv_load_stats)
+            # if cache is None, _load_best_match_cache failed to load kv cache.
+            if cache is not None:                
+                kv_load_stats = {"filename": os.path.basename(best_match["file_path"]),
+                                "size": os.stat(best_match["file_path"]).st_size,
+                                "load_time": load_time
+                                }
+
+                logger.debug(f"{kv_load_stats=}")
+                return (cache, best_match["common_len"], kv_load_stats)
 
         # No suitable cache found
         return None, 0, {}
