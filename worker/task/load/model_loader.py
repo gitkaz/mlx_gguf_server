@@ -68,7 +68,7 @@ class ModelLoader:
 
     def _load_mlx(self, model_path: str, adapter_path: Optional[str]) -> Dict[str, Any]:
         try:
-            model, tokenizer = mlx_lm.load(model_path, tokenizer_config={"trust_remote_code": None}, adapter_path=adapter_path)
+            model, tokenizer = mlx_lm.load(model_path, tokenizer_config={"trust_remote_code": None}, adapter_path=adapter_path, lazy=True)
             context_length = self._get_mlx_context_length(model_path)
 
             return {
