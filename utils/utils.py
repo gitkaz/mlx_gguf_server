@@ -2,6 +2,17 @@ import os
 import math
 
 
+
+def get_unload_candidates(loaded_models: dict):
+    return sorted(
+        [
+            (model_name, entry) 
+            for model_name, entry in loaded_models.items()
+            if isinstance(entry, dict) and entry["auto_unload"]
+        ],
+        key=lambda x: (x[1]["priority"], -x[1]["memory_usage"], x[1]["last_accessed"])
+    )
+
 def get_model_size(model_path: str):
     model_size = 0
     if os.path.isfile(model_path):

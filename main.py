@@ -23,7 +23,7 @@ import embedding.run_process
 from core.process_manager import LLMProcess
 from schemas import CompletionParams, TokenCountParams, ModelLoadParams, ProcessCleanParams, KokoroTtsParams, EmbeddingsParams
 from embedding.embedding_schemas import OpenAICompatibleEmbeddings
-from utils.utils import create_model_list, create_adapter_list
+from utils.utils import create_model_list, create_adapter_list, get_model_size, get_unload_candidates
 from utils.kv_cache_utils import prepare_temp_dir, validate_filename, process_upload_file, get_kv_cache_abs_path
 from whisper_stt.whisper import AudioTranscriber
 # from logging import getLogger
@@ -64,6 +64,9 @@ async def lifespan(app: FastAPI):
     access_logger.addHandler(file_handler)
     # =====================================================
 
+    # set Env-based params
+    app.state.max_memory_gb = int(os.environ.get("MAX_MEMORY_GB", "0"))
+    
     app.state.models = create_model_list()
     app.state.loaded_models = {}
 
@@ -148,7 +151,34 @@ def terminate_llm_process(model_id: str):
     else:
         error_message = f"Terminate process failed. model_id = {model_id} not found."
         return False, error_message
-    
+
+def _unload_model(model_id: str) -> tuple[bool, str]:
+    """Internal function to unload a model by ID (used by both API and auto-unload)"""
+    try:
+        # First terminate the process
+        success, message = terminate_llm_process(model_id)
+        if not success:
+            return False, message
+
+        # Then find and remove from loaded_models
+        model_name_to_remove = None
+        for name, model_info in app.state.loaded_models.items():
+            if isinstance(model_info, dict) and model_info["id"] == model_id:
+                model_name_to_remove = name
+                break
+
+        if model_name_to_remove:
+            del app.state.loaded_models[model_name_to_remove]
+            logger.info(f"Successfully removed {model_name_to_remove} from loaded models")
+        else:
+            logger.warning(f"Model ID {model_id} not found in loaded_models")
+
+        return True, "success"
+
+    except Exception as e:
+        logger.error(f"Error in _unload_model: {str(e)}", exc_info=True)
+        return False, str(e)
+
 
 def create_llm_process(model_id: str) -> LLMProcess:
     llm_process = LLMProcess()
@@ -269,15 +299,13 @@ def get_v1_internal_model_list():
 
 @app.post("/v1/internal/model/unload")
 def post_model_unload(model_id: str = Header(default="0", alias="X-Model-Id")):
-    llm_process: LLMProcess = get_llm_process(model_id)
-    model_name = llm_process.model_info.get("model_name")
- 
-    success, message =  terminate_llm_process(model_id)
+    success, message = _unload_model(model_id)
     if success:
-        del app.state.loaded_models[model_name]
         return {"unload": "success"}
     else:
-        raise HTTPException(status_code=500, detail=f"Unload model failed. {message=}")
+        raise HTTPException(status_code=500, detail=f"Unload model failed: {message}")
+
+ 
 
 
 @app.post("/v1/internal/model/load")
@@ -292,6 +320,50 @@ def post_model_load(params: ModelLoadParams, model_id: str = Header(default="0",
         raise HTTPException(status_code=400, detail=f"Error: model_id {model_id} already exists. Unload first.")
 
     params.llm_model_path = app.state.models[model_name]['path']
+    required_memory = get_model_size(params.llm_model_path)
+
+    # If app.state.max_memory_gb > 0, the auto unload feature will run.
+    if app.state.max_memory_gb > 0: 
+        # Collect memory requirements for auto-unload feature
+        max_memory_gb = app.state.max_memory_gb
+        logger.info(f"{required_memory=}, {max_memory_gb=}")
+
+        # Check if requested model alone exceeds memory limit
+        if required_memory > max_memory_gb:
+            raise HTTPException(status_code=400, detail=f"Error: The requested model exceeds the max memory size.")
+
+        # Calculate current memory usage from loaded models
+        current_usage = 0
+        for name, model_info in app.state.loaded_models.items():
+            if isinstance(model_info, dict):  # Handle both old and new formats
+                model_path = app.state.models.get(name, {}).get('path', '')
+                if model_path:
+                    current_usage += get_model_size(model_path)
+        total_required_memory = current_usage + required_memory
+
+        # Prepare list of candidate models for unloading (sorted by priority)
+        unload_candidates = []
+        if total_required_memory > max_memory_gb:
+            unload_candidates = get_unload_candidates(app.state.loaded_models)
+
+        # Unload candidates until memory requirements are satisfied
+        while total_required_memory > max_memory_gb and unload_candidates:
+            model_name, candidate = unload_candidates.pop(0)
+            logger.info(f"Attempting to unload {model_name} to free memory")
+
+            success, message = _unload_model(candidate["id"])
+            if success:
+                # Recalculate memory usage
+                current_usage = sum(
+                    entry["memory_usage"] 
+                    for entry in app.state.loaded_models.values() 
+                    if isinstance(entry, dict)
+                )
+                total_required_memory = current_usage + required_memory
+                logger.info(f"Memory freed. New total: {total_required_memory} GB")
+            else:
+                logger.warning(f"Failed to unload {model_name}: {message}")
+
 
     # get adapter name
     adapter_name = getattr(params, "adapter_name", None)
@@ -312,7 +384,14 @@ def post_model_load(params: ModelLoadParams, model_id: str = Header(default="0",
     status_code, response = asyncio.run(llm_process.task_request('load', params))
     if status_code == 200:
         llm_process.model_info = response
-        app.state.loaded_models[model_name] = model_id
+        # app.state.loaded_models[model_name] = model_id
+        app.state.loaded_models[model_name] = {
+            "id": model_id,
+            "memory_usage": required_memory,
+            "auto_unload": params.auto_unload if hasattr(params, 'auto_unload') else True,
+            "priority": params.priority if hasattr(params, 'priority') else 0,
+            "last_accessed": time.time()
+        }
         return {"load": "success"}
     else: 
         success, message = terminate_llm_process(model_id)
@@ -509,6 +588,7 @@ def parse_arguments():
     parser.add_argument('--max-kv-size', type=int, default=10, help='max kv cache files size (GB)')
     parser.add_argument('--whisper-model', type=str, help='HuggingFace path or local filepath to Whisper model', default=None)
     parser.add_argument('--kokoro-config', type=str, help='Kokoro-82M config path', default=None)
+    parser.add_argument('--max-memory-gb', type=int, default=0, help='Specify the memory size in GB. If total loaded model size exceeded this size, automactically unload the current largest model. If not speficy this argucment, auto unload will not be triggered.')
     args = parser.parse_args()
     return args
 
@@ -526,6 +606,12 @@ if __name__ == "__main__":
         app.state.enable_kokoro_tts = True
     else:
         app.state.enable_kokoro_tts = False
+
+    if args.max_memory_gb < 0:
+        raise argparse.ArgumentTypeError(
+            f"max-memory-gb must be at least 1 (current: {args.max_memory_gb})"
+        )
+    os.environ["MAX_MEMORY_GB"] = str(args.max_memory_gb)
 
     os.environ["MAX_KV_SIZE_GB"] = str(args.max_kv_size)
     os.environ["LOG_LEVEL"]      = args.log_level.upper()
