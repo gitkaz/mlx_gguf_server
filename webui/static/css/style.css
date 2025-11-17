@@ -75,7 +75,7 @@ h2 {
 
 .model-card {
     display: grid;
-    grid-template-columns: 0.1fr 1.0fr 0.3fr 0.3fr 0.3fr;
+    grid-template-columns: 0.1fr 1.0fr 0.3fr 0.3fr 0.3fr 0.3fr 0.3fr;
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 1.2rem;
@@ -137,14 +137,14 @@ h2 {
 
 .model-loader-form {
     display: grid;
-    grid-template-columns: 1fr 0.3fr 0.7fr 0.5fr;
+    grid-template-columns: 1fr 0.3fr 0.7fr 0.5fr 0.3fr 0.3fr;
     gap: 1.5rem;
 }
 
 .loaded-models {
     display: grid;
     width: 100%;
-    grid-template-columns: 1fr 0.3fr 0.7fr 0.5fr;
+    grid-template-columns: 1fr 0.3fr 0.7fr 0.5fr 0.3fr 0.3fr;
     gap: 1.5rem;
 }
 

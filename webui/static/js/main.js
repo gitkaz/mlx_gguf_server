@@ -81,11 +81,16 @@ function handleProcessManagentResponse(event){
             model_name = jsonData.processes[key]['model_name'];
             model_type = jsonData.processes[key]['model_type'];
             context_length = jsonData.processes[key]['context_length'];
+            auto_unload = jsonData.processes[key]['auto_unload'];
+            priority = jsonData.processes[key]['priority'];
+
             html += `
             <div class="model-card" id="model-card-${model_id}">
                 <span class="model-id">ID: ${model_id}</span>
                 <span class="model-info">Name: ${model_name}</span>
                 <span class="model-info">Type: ${model_type}</span>
+                <span class="model-info">Auto Unload: ${auto_unload ? 'Yes' : 'No'}</span>
+                <span class="model-info">Priority: ${priority}</span>
                 <span class="model-info">CTX: ${context_length}</span>
                 <button onclick="unloadModel('${model_id}')" class="btn danger">Unload</button>
             </div>
@@ -126,6 +131,8 @@ document.getElementById('load-model-form').addEventListener('submit', async func
     const modelId = document.getElementById('model-id').value;
     const modelName = document.getElementById('model-select').value;
     const useKvCache = document.querySelector("[name=use_kv_cache]").checked;
+    const autoUnload = document.querySelector("[name=auto_unload]").checked;
+    const priority = parseInt(document.getElementById('priority').value);
 
     const responseArea = document.getElementById('load-response');
     responseArea.className = 'response-area show';
@@ -140,7 +147,9 @@ document.getElementById('load-model-form').addEventListener('submit', async func
             },
             body: JSON.stringify({
                 llm_model_name: modelName,
-                use_kv_cache: useKvCache
+                use_kv_cache: useKvCache,
+                auto_unload: autoUnload,
+                priority: priority
             })
         });
 

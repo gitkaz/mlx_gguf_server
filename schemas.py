@@ -65,6 +65,8 @@ class ModelLoadParams(BaseModel):
     top_p: Optional[float] = None
     use_kv_cache: Optional[bool] = None
     kv_cache_threshold: Optional[int] = None
+    auto_unload: Optional[bool] = None
+    priority: Optional[int] = None
 
 class ProcessCleanParams(BaseModel):
     timeout: int
