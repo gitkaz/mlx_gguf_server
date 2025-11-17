@@ -203,7 +203,9 @@ async def get_management_processes():
             "process_id": llm_process.process.pid,
             "cpu_usage": llm_process.get_cpu_usage(),
             "memory_usage": llm_process.get_memory_usage(),
-            "current_queue": llm_process.get_queues_info()
+            "current_queue": llm_process.get_queues_info(),
+            "auto_unload": app.state.loaded_models.get(llm_process.model_info["model_name"], {}).get("auto_unload", True),
+            "priority": app.state.loaded_models.get(llm_process.model_info["model_name"], {}).get("priority", 0)
         }
         processes_info[model_id] = process_info
     return {"processes": processes_info}
@@ -384,7 +386,6 @@ def post_model_load(params: ModelLoadParams, model_id: str = Header(default="0",
     status_code, response = asyncio.run(llm_process.task_request('load', params))
     if status_code == 200:
         llm_process.model_info = response
-        # app.state.loaded_models[model_name] = model_id
         app.state.loaded_models[model_name] = {
             "id": model_id,
             "memory_usage": required_memory,
@@ -392,6 +393,7 @@ def post_model_load(params: ModelLoadParams, model_id: str = Header(default="0",
             "priority": params.priority if hasattr(params, 'priority') else 0,
             "last_accessed": time.time()
         }
+        logger.info(f"{app.state.loaded_models=}")
         return {"load": "success"}
     else: 
         success, message = terminate_llm_process(model_id)
