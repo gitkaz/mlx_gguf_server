@@ -152,6 +152,131 @@ def terminate_llm_process(model_id: str):
         error_message = f"Terminate process failed. model_id = {model_id} not found."
         return False, error_message
 
+def _get_next_auto_load_id():
+    """Get next available ID in the auto-load range (e.g., 100-199)"""
+    base = 100
+    max_auto_loads = 100
+
+    for i in range(max_auto_loads):
+        candidate_id = str(base + i)
+        if candidate_id not in app.state.llm_processes:
+            return candidate_id
+
+    raise RuntimeError("No available model IDs in auto-load range")
+
+async def _load_model(params: ModelLoadParams, model_id: str) -> tuple[bool, str]:
+    """
+    Internal function to load a model (used by both API and auto-load)
+
+    Args:
+        params: Complete ModelLoadParams object with all configuration
+        model_id: The model ID to use for the process
+
+    Returns:
+        (success, message) tuple
+    """
+    model_name = params.llm_model_name
+
+    # Validation checks
+    if model_name not in app.state.models:
+        return False, f"Error: {model_name} not found."
+    if model_name in app.state.loaded_models:
+        return False, f"Error: {model_name} already loaded at {app.state.loaded_models[model_name]}."
+    if app.state.llm_processes.get(model_id):
+        return False, f"Error: model_id {model_id} already exists. Unload first."
+
+    # Set default values if not provided
+    if params.auto_unload is None:
+        params.auto_unload = True
+    if params.priority is None:
+        params.priority = 0
+
+    # Get model path
+    params.llm_model_path = app.state.models[model_name]['path']
+    required_memory = get_model_size(params.llm_model_path)
+
+    # Auto unload handling if enabled
+    if app.state.max_memory_gb > 0:
+        # Collect memory requirements
+        max_memory_gb = app.state.max_memory_gb
+        logger.info(f"{required_memory=}, {max_memory_gb=}")
+
+        # Check if requested model alone exceeds memory limit
+        if required_memory > max_memory_gb:
+            return False, f"Error: The requested model exceeds the max memory size."
+
+        # Calculate current memory usage
+        current_usage = 0
+        for name, model_info in app.state.loaded_models.items():
+            if isinstance(model_info, dict):
+                model_path = app.state.models.get(name, {}).get('path', '')
+                if model_path:
+                    current_usage += get_model_size(model_path)
+        total_required_memory = current_usage + required_memory
+
+        # Unload candidates if needed
+        if total_required_memory > max_memory_gb:
+            unload_candidates = get_unload_candidates(app.state.loaded_models)
+            while total_required_memory > max_memory_gb and unload_candidates:
+                candidate_name, candidate = unload_candidates.pop(0)
+                logger.info(f"Attempting to unload {candidate_name} to free memory")
+
+                success, message = _unload_model(candidate["id"])
+                if success:
+                    # Recalculate memory usage
+                    current_usage = sum(
+                        entry["memory_usage"] 
+                        for entry in app.state.loaded_models.values() 
+                        if isinstance(entry, dict)
+                    )
+                    total_required_memory = current_usage + required_memory
+                    logger.info(f"Memory freed. New total: {total_required_memory} GB")
+                else:
+                    logger.warning(f"Failed to unload {candidate_name}: {message}")
+
+    # Adapter handling
+    adapter_name = getattr(params, "adapter_name", None)
+    # using empty str to disable adapter
+    if isinstance(adapter_name, str):
+        adapter_name = adapter_name.strip() or None
+    if adapter_name:
+        adapters = getattr(app.state, "adapters", {}) or {}
+        if adapter_name not in adapters:
+            return False, f"Error: adapter {adapter_name} not found."
+        setattr(params, "adapter_path", adapters[adapter_name]["path"])
+    else:
+        if getattr(params, "adapter_path", None):
+            return False, "Direct adapter_path is not allowed. Use adapter_name."
+
+    # Create and start process
+    llm_process: LLMProcess = create_llm_process(model_id)
+
+    try:
+        # Pass the complete params object to the worker process
+        # status_code, response = await asyncio.run(llm_process.task_request('load', params))
+        status_code, response = await llm_process.task_request('load', params)
+        if status_code == 200:
+            llm_process.model_info = response
+            app.state.loaded_models[model_name] = {
+                "id": model_id,
+                "memory_usage": required_memory,
+                "auto_unload": params.auto_unload,
+                "priority": params.priority,
+                "last_accessed": time.time()
+            }
+            return True, "success"
+        else:
+            # Clean up on failure
+            success, message = terminate_llm_process(model_id)
+            if not success:
+                logger.error(f"Failed to clean up after failed load: {message}")
+            return False, response
+    except Exception as e:
+        # Additional cleanup if needed
+        if model_id in app.state.llm_processes:
+            terminate_llm_process(model_id)
+        return False, str(e)
+
 def _unload_model(model_id: str) -> tuple[bool, str]:
     """Internal function to unload a model by ID (used by both API and auto-unload)"""
     try:
@@ -255,7 +380,41 @@ async def post_completion(request:Request, params: CompletionParams, model_id: s
         if params.model in app.state.loaded_models:
             model_id = app.state.loaded_models[params.model]
         else:
-            raise HTTPException(status_code=400, detail=f"Model '{params.model}' not exist.")
+            if app.state.auto_load_enabled is False:
+                raise HTTPException(status_code=400, detail=f"Model '{params.model}' not exist.")
+
+    # Auto-load logic
+    requested_model = None
+    if hasattr(params, "model") and params.model:
+        requested_model = params.model
+
+    if requested_model and requested_model not in app.state.loaded_models:
+        if not app.state.auto_load_enabled:
+            raise HTTPException(status_code=400, detail=f"Model '{requested_model}' not loaded. Auto-load is disabled.")
+
+        # Find an available model ID
+        auto_load_id = _get_next_auto_load_id()
+
+        # Create ModelLoadParams with auto-load defaults
+        auto_load_params = ModelLoadParams(
+            llm_model_name=requested_model,
+            auto_unload=True,      # Always auto-unload for auto-loaded models
+            priority=0,            # Default priority
+            use_kv_cache=True,     # Enable KV cache by default
+            # Copy other parameters from request if needed
+            temperature=params.temperature if hasattr(params, "temperature") else None,
+            max_tokens=params.max_tokens if hasattr(params, "max_tokens") else None
+        )
+
+        # Load the model
+        success, message = await _load_model(auto_load_params, auto_load_id)
+
+        if not success:
+            logger.error(f"Auto-load failed for {requested_model}: {message}")
+            raise HTTPException(status_code=500, detail=f"Failed to auto-load model '{requested_model}'")
+
+        # Update model_id to use the newly loaded model
+        model_id = auto_load_id
 
     llm_process: LLMProcess = get_llm_process(model_id)
 
@@ -307,100 +466,14 @@ def post_model_unload(model_id: str = Header(default="0", alias="X-Model-Id")):
     else:
         raise HTTPException(status_code=500, detail=f"Unload model failed: {message}")
 
- 
-
-
 @app.post("/v1/internal/model/load")
-def post_model_load(params: ModelLoadParams, model_id: str = Header(default="0", alias="X-Model-Id")):
-    model_name = params.llm_model_name
- 
-    if model_name not in app.state.models:
-        raise HTTPException(status_code=400, detail=f"Error: {model_name} not found.")
-    if model_name in app.state.loaded_models:
-        raise HTTPException(status_code=400, detail=f"Error: {model_name} already loaded at {app.state.loaded_models[model_name]}.")
-    if app.state.llm_processes.get(model_id):
-        raise HTTPException(status_code=400, detail=f"Error: model_id {model_id} already exists. Unload first.")
+async def post_model_load(params: ModelLoadParams, model_id: str = Header(default="0", alias="X-Model-Id")):
+    success, message = await _load_model(params, model_id)
 
-    params.llm_model_path = app.state.models[model_name]['path']
-    required_memory = get_model_size(params.llm_model_path)
-
-    # If app.state.max_memory_gb > 0, the auto unload feature will run.
-    if app.state.max_memory_gb > 0: 
-        # Collect memory requirements for auto-unload feature
-        max_memory_gb = app.state.max_memory_gb
-        logger.info(f"{required_memory=}, {max_memory_gb=}")
-
-        # Check if requested model alone exceeds memory limit
-        if required_memory > max_memory_gb:
-            raise HTTPException(status_code=400, detail=f"Error: The requested model exceeds the max memory size.")
-
-        # Calculate current memory usage from loaded models
-        current_usage = 0
-        for name, model_info in app.state.loaded_models.items():
-            if isinstance(model_info, dict):  # Handle both old and new formats
-                model_path = app.state.models.get(name, {}).get('path', '')
-                if model_path:
-                    current_usage += get_model_size(model_path)
-        total_required_memory = current_usage + required_memory
-
-        # Prepare list of candidate models for unloading (sorted by priority)
-        unload_candidates = []
-        if total_required_memory > max_memory_gb:
-            unload_candidates = get_unload_candidates(app.state.loaded_models)
-
-        # Unload candidates until memory requirements are satisfied
-        while total_required_memory > max_memory_gb and unload_candidates:
-            model_name, candidate = unload_candidates.pop(0)
-            logger.info(f"Attempting to unload {model_name} to free memory")
-
-            success, message = _unload_model(candidate["id"])
-            if success:
-                # Recalculate memory usage
-                current_usage = sum(
-                    entry["memory_usage"] 
-                    for entry in app.state.loaded_models.values() 
-                    if isinstance(entry, dict)
-                )
-                total_required_memory = current_usage + required_memory
-                logger.info(f"Memory freed. New total: {total_required_memory} GB")
-            else:
-                logger.warning(f"Failed to unload {model_name}: {message}")
-
-
-    # get adapter name
-    adapter_name = getattr(params, "adapter_name", None)
-    # using empter str to disable adapter
-    if isinstance(adapter_name, str):
-        adapter_name = adapter_name.strip() or None
-    if adapter_name:
-        adapters = getattr(app.state, "adapters", {}) or {}
-        if adapter_name not in adapters:
-            raise HTTPException(status_code=400, detail=f"Error: adapter {adapter_name} not found.")
-        setattr(params, "adapter_path", adapters[adapter_name]["path"])
-    else:
-        if getattr(params, "adapter_path", None):
-            raise HTTPException(status_code=400, detail="Direct adapter_path is not allowed. Use adapter_name.")
-
-    llm_process: LLMProcess = create_llm_process(model_id)
-
-    status_code, response = asyncio.run(llm_process.task_request('load', params))
-    if status_code == 200:
-        llm_process.model_info = response
-        app.state.loaded_models[model_name] = {
-            "id": model_id,
-            "memory_usage": required_memory,
-            "auto_unload": params.auto_unload if hasattr(params, 'auto_unload') else True,
-            "priority": params.priority if hasattr(params, 'priority') else 0,
-            "last_accessed": time.time()
-        }
-        logger.info(f"{app.state.loaded_models=}")
+    if success:
         return {"load": "success"}
-    else: 
-        success, message = terminate_llm_process(model_id)
-        if not success:
-            raise HTTPException(status_code=500, detail=f"Unload model failed. {message=}")
-        raise HTTPException(status_code=status_code, detail=response)
-    
+    else:
+        raise HTTPException(status_code=500, detail=f"Load model failed: {message}") 
 
 @app.post("/kokoro/generate")
 async def post_kokoro_generate(params: KokoroTtsParams):
@@ -591,6 +664,7 @@ def parse_arguments():
     parser.add_argument('--whisper-model', type=str, help='HuggingFace path or local filepath to Whisper model', default=None)
     parser.add_argument('--kokoro-config', type=str, help='Kokoro-82M config path', default=None)
     parser.add_argument('--max-memory-gb', type=int, default=0, help='Specify the memory size in GB. If total loaded model size exceeded this size, automactically unload the current largest model. If not speficy this argucment, auto unload will not be triggered.')
+    parser.add_argument('--enable-auto-load', action='store_true', help='Enable automatic loading model. (JIT Loading)')
     args = parser.parse_args()
     return args
 
@@ -609,10 +683,18 @@ if __name__ == "__main__":
     else:
         app.state.enable_kokoro_tts = False
 
+    if args.enable_auto_load:
+        if args.max_memory_gb <= 0:
+            raise argparse.ArgumentTypeError(
+                f"max-memory-gb must be set for enables auto-load."
+            )
+        app.state.auto_load_enabled = True
+
     if args.max_memory_gb < 0:
         raise argparse.ArgumentTypeError(
             f"max-memory-gb must be at least 1 (current: {args.max_memory_gb})"
         )
+
     os.environ["MAX_MEMORY_GB"] = str(args.max_memory_gb)
 
     os.environ["MAX_KV_SIZE_GB"] = str(args.max_kv_size)
