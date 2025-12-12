@@ -378,7 +378,7 @@ async def post_completion(request:Request, params: CompletionParams, model_id: s
 
     if "X-Model-Id" not in request.headers and hasattr(params, "model") and params.model:
         if params.model in app.state.loaded_models:
-            model_id = app.state.loaded_models[params.model]
+            model_id = app.state.loaded_models[params.model]['id']
         else:
             if app.state.auto_load_enabled is False:
                 raise HTTPException(status_code=400, detail=f"Model '{params.model}' not exist.")
