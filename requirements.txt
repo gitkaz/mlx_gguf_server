@@ -2,7 +2,7 @@ fastapi
 apscheduler
 sse_starlette
 pydantic
-mlx_lm==0.28.4
+mlx_lm==0.30.0
 mlx-whisper
 uvicorn
 torch
