@@ -46,6 +46,16 @@
                         </label>
                         <small>Model can be automatically unloaded when memory constraints are reached</small>
                     </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" name="trust_remote_code" id="trust-remote-code">
+                            Trust remote code
+                        </label>
+                        <small>
+                            Required for some models. ⚠️ enable only for trusted models.
+                        </small>
+                    </div>
                     <div class="form-group">
                         <label for="priority">Unloading Priority:</label>
                         <input type="number" id="priority" value="0" min="0" max="10">

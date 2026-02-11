@@ -40,7 +40,7 @@ class ModelLoader:
             if self._is_gguf_model(request_model_path):
                 loaded_model = self._load_llama_cpp(request_model_path, params.chat_format)
             else:
-                loaded_model = self._load_mlx(request_model_path, params.adapter_path)
+                loaded_model = self._load_mlx(request_model_path, params.adapter_path, trust_remote_code=params.trust_remote_code)
 
             # 2. LLMModelインスタンスの設定
             self._configure_llm_model(llm_model, loaded_model, request_model_path)
@@ -66,9 +66,11 @@ class ModelLoader:
             return model_path.lower().endswith(".gguf")
         return False
 
-    def _load_mlx(self, model_path: str, adapter_path: Optional[str]) -> Dict[str, Any]:
+    def _load_mlx(self, model_path: str, adapter_path: Optional[str], trust_remote_code: Optional[bool] = None) -> Dict[str, Any]:
+
+        use_trust = trust_remote_code if trust_remote_code is not None else False
         try:
-            model, tokenizer = mlx_lm.load(model_path, tokenizer_config={"trust_remote_code": None}, adapter_path=adapter_path, lazy=True)
+            model, tokenizer = mlx_lm.load(model_path, tokenizer_config={"trust_remote_code": use_trust}, adapter_path=adapter_path, lazy=True)
             context_length = self._get_mlx_context_length(model_path)
 
             return {

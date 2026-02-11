@@ -132,8 +132,9 @@ document.getElementById('load-model-form').addEventListener('submit', async func
     const modelName = document.getElementById('model-select').value;
     const useKvCache = document.querySelector("[name=use_kv_cache]").checked;
     const autoUnload = document.querySelector("[name=auto_unload]").checked;
+    const trustRemoteCode = document.getElementById('trust-remote-code').checked;
     const priority = parseInt(document.getElementById('priority').value);
-
+    
     const responseArea = document.getElementById('load-response');
     responseArea.className = 'response-area show';
     responseArea.innerHTML = '<div class="alert info">Loading model...</div>';
@@ -149,6 +150,7 @@ document.getElementById('load-model-form').addEventListener('submit', async func
                 llm_model_name: modelName,
                 use_kv_cache: useKvCache,
                 auto_unload: autoUnload,
+                trust_remote_code: trustRemoteCode,
                 priority: priority
             })
         });
