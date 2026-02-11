@@ -67,6 +67,7 @@ class ModelLoadParams(BaseModel):
     kv_cache_threshold: Optional[int] = None
     auto_unload: Optional[bool] = None
     priority: Optional[int] = None
+    trust_remote_code: Optional[bool] = None
 
 class ProcessCleanParams(BaseModel):
     timeout: int
