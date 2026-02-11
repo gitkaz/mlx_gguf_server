@@ -75,7 +75,7 @@ h2 {
 
 .model-card {
     display: grid;
-    grid-template-columns: 0.1fr 1.0fr 0.3fr 0.3fr 0.3fr 0.3fr 0.3fr;
+    grid-template-columns: 0.1fr 0.9fr 0.3fr 0.3fr 0.3fr 0.3fr 0.3fr 0.3fr;
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 1.2rem;

@@ -261,6 +261,7 @@ async def _load_model(params: ModelLoadParams, model_id: str) -> tuple[bool, str
                 "id": model_id,
                 "memory_usage": required_memory,
                 "auto_unload": params.auto_unload,
+                "trust_remote_code": params.trust_remote_code if params.trust_remote_code is not None else False,
                 "priority": params.priority,
                 "last_accessed": time.time()
             }
@@ -319,6 +320,8 @@ async def webui(request: Request):
 async def get_management_processes():
     processes_info = {}
     for model_id, llm_process in app.state.llm_processes.items():
+        model_name = llm_process.model_info["model_name"]
+        model_entry = app.state.loaded_models.get(model_name, {})
         process_info = {
             "model_id": model_id,
             "model_name": llm_process.model_info["model_name"],
@@ -330,7 +333,8 @@ async def get_management_processes():
             "memory_usage": llm_process.get_memory_usage(),
             "current_queue": llm_process.get_queues_info(),
             "auto_unload": app.state.loaded_models.get(llm_process.model_info["model_name"], {}).get("auto_unload", True),
-            "priority": app.state.loaded_models.get(llm_process.model_info["model_name"], {}).get("priority", 0)
+            "priority": app.state.loaded_models.get(llm_process.model_info["model_name"], {}).get("priority", 0),
+            "trust_remote_code": model_entry.get("trust_remote_code", False) 
         }
         processes_info[model_id] = process_info
     return {"processes": processes_info}
@@ -398,9 +402,10 @@ async def post_completion(request:Request, params: CompletionParams, model_id: s
         # Create ModelLoadParams with auto-load defaults
         auto_load_params = ModelLoadParams(
             llm_model_name=requested_model,
-            auto_unload=True,      # Always auto-unload for auto-loaded models
-            priority=0,            # Default priority
-            use_kv_cache=True,     # Enable KV cache by default
+            auto_unload=True,         # Always auto-unload for auto-loaded models
+            priority=0,               # Default priority
+            use_kv_cache=True,        # Enable KV cache by default
+            trust_remote_code=False,  # Auto-loaded models should not trust remote code by default
             # Copy other parameters from request if needed
             temperature=params.temperature if hasattr(params, "temperature") else None,
             max_tokens=params.max_tokens if hasattr(params, "max_tokens") else None

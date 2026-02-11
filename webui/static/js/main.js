@@ -82,6 +82,7 @@ function handleProcessManagentResponse(event){
             model_type = jsonData.processes[key]['model_type'];
             context_length = jsonData.processes[key]['context_length'];
             auto_unload = jsonData.processes[key]['auto_unload'];
+            trust_remote_code = jsonData.processes[key]['trust_remote_code'];
             priority = jsonData.processes[key]['priority'];
 
             html += `
@@ -90,6 +91,7 @@ function handleProcessManagentResponse(event){
                 <span class="model-info">Name: ${model_name}</span>
                 <span class="model-info">Type: ${model_type}</span>
                 <span class="model-info">Auto Unload: ${auto_unload ? 'Yes' : 'No'}</span>
+                <span class="model-info">Trust code: ${trust_remote_code ? 'Yes' : 'No'}</span>
                 <span class="model-info">Priority: ${priority}</span>
                 <span class="model-info">CTX: ${context_length}</span>
                 <button onclick="unloadModel('${model_id}')" class="btn danger">Unload</button>
