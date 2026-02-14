@@ -125,11 +125,17 @@ class LLMProcess:
         return queue_info
 
     def get_cpu_usage(self):
+        if self.process is None:
+            raise psutil.NoSuchProcess(pid=None)
         process = psutil.Process(self.process.pid)
         cpu_usage = process.cpu_percent()
         return cpu_usage
 
+
+
     def get_memory_usage(self):
+        if self.process is None:
+            raise psutil.NoSuchProcess(pid=None)
         process = psutil.Process(self.process.pid)
         memory_usage = process.memory_info().rss
         return memory_usage

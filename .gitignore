@@ -61,3 +61,7 @@ worker/kv_cache/data/*
 
 # Exclude all .gitkeep file
 !**/.gitkeep
+
+# Exclude test directory for now
+requirements-dev.txt
+tests/
