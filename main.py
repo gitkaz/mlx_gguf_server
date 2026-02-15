@@ -629,6 +629,9 @@ async def import_kv_cache(file: UploadFile):
 
         return {"status": "success", "message": f"Cache file imported", "cache_id": cache_id}
 
+    except HTTPException:
+        # Re-raise HTTPException without wrapping
+        raise
     except Exception as e:
         # Clean up temporary files on error
         if upload_file_path.exists():
