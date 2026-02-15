@@ -250,6 +250,9 @@ async def _load_model(params: ModelLoadParams, model_id: str) -> tuple[bool, str
 
     # Create and start process
     llm_process: LLMProcess = create_llm_process(model_id)
+    # Start background listener
+    llm_process.listener_task = asyncio.create_task(llm_process.start_listener())
+
 
     try:
         # Pass the complete params object to the worker process
