@@ -77,9 +77,12 @@ async def lifespan(app: FastAPI):
         app.state.adapters = {}
 
     app.state.llm_processes = {}
-    init_task_scheduler()
+    app.state.scheduler = init_task_scheduler()
     yield
     logger.info("stopping....")
+
+    if hasattr(app.state, "scheduler"):
+        app.state.scheduler.shutdown()
 
 app = FastAPI(lifespan=lifespan)
 app.mount("/webui/static", StaticFiles(directory="webui/static"), name="static")
@@ -90,6 +93,8 @@ def init_task_scheduler():
     scheduler.add_job(recurring_task_cleanup, 'interval', minutes=5)
     logging.getLogger('apscheduler.executors.default').setLevel(logging.WARNING)
     scheduler.start()
+    return scheduler  # インスタンスを返す
+
 
 
 def recurring_task_cleanup():
