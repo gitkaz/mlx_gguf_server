@@ -79,16 +79,21 @@ class LLMProcess:
         self.process.start()
 
     def stop(self):
+        # 1. stop worker process. (For graceful stop, put "none" to queue)
         self.request_queue.put(None)
+        # if worker process still exists, termninate the process by force.
         if self.process:
             self.process.join(timeout=5)
             if self.process.is_alive():
                 self.process.terminate()
 
-        # 【重要】親プロセスのリスナーも止める
+        #2. stop listener
         if self.listener_task:
             self.listener_task.cancel()
-            # リスナーのループを抜けるためにダミーデータを送るか、cancelで強制終了させる
+
+        #3. send "none" to response_queue to break start_listener.
+        self.response_queue.put(None)
+
 
     async def task_request_streaming(self, task: str, params: Union[CompletionParams, TokenCountParams, ModelLoadParams]):
         request_id = str(uuid.uuid4())
