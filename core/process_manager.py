@@ -228,11 +228,26 @@ class LLMProcess:
         for item in queue_contents:
             queue.put(item)
 
+
     def get_queues_info(self):
+        """
+        Return queue information in a JSON-serializable format.
+        Does NOT expose internal asyncio.Future or asyncio.Queue objects.
+        """
         queue_info = {}
         queue_info["pending_requests_count"] = len(self.pending_requests)
-        queue_info["queues"] = self.pending_requests
+
+        # Return only request IDs and their types (serializable)
+        queue_info["queues"] = {
+            request_id: {
+                "type": "stream" if isinstance(target, asyncio.Queue) else "request",
+                "has_result": target.done() if isinstance(target, asyncio.Future) else None
+            }
+            for request_id, target in self.pending_requests.items()
+        }
+
         return queue_info
+
 
     def get_cpu_usage(self):
         if self.process is None:
