@@ -23,7 +23,7 @@ import embedding.run_process
 from core.process_manager import LLMProcess
 from schemas import CompletionParams, TokenCountParams, ModelLoadParams, ProcessCleanParams, KokoroTtsParams, EmbeddingsParams
 from embedding.embedding_schemas import OpenAICompatibleEmbeddings
-from utils.utils import create_model_list, create_adapter_list, get_model_size, get_unload_candidates
+from utils.utils import create_model_list, create_adapter_list, get_model_size, get_unload_candidates, get_model_details
 from utils.kv_cache_utils import prepare_temp_dir, validate_filename, process_upload_file, get_kv_cache_abs_path
 from whisper_stt.whisper import AudioTranscriber
 # from logging import getLogger
@@ -455,13 +455,21 @@ async def post_token_count(params: TokenCountParams, model_id: str = Header(defa
         raise HTTPException(status_code=status_code, detail=response)
 
 
-@app.get("/v1/internal/model/info")
-async def get_v1_internal_model_info(model_id: str = Header(default="0", alias="X-Model-Id")):
-    llm_process: LLMProcess = get_llm_process(model_id)
-    model_name = llm_process.model_info["model_name"]
-    model_type = llm_process.model_info["model_type"]
-    return {"model_name": model_name, "model_type": model_type}
+@app.get("/v1/internal/model/info/{model_name}")
+async def get_v1_internal_model_info(model_name: str):
+    try:
+        model_info = get_model_details(model_name)
 
+        # Check if model is currently loaded
+        if model_name in app.state.loaded_models:
+            model_info["is_loaded"] = True
+            model_info["loaded_model_id"] = app.state.loaded_models[model_name]["id"]
+
+        return model_info
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/v1/internal/model/list")
 def get_v1_internal_model_list():
