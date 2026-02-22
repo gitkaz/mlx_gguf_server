@@ -144,31 +144,7 @@ class ModelLoader:
         }
 
         logger.debug(f"Model info created: {model_info}")
-        return model_info
-
-    def _get_mlx_context_length(self, model_path: str) -> int:
-        """MLXモデルの context_length を config.json から取得"""
-        config_path = os.path.join(model_path, "config.json")
-        try:
-            with open(config_path, "r") as f:
-                config = json.load(f)
-
-            if config.get("rope_scaling") and \
-            config["rope_scaling"].get("factor") and \
-            config["rope_scaling"].get("original_max_position_embeddings"):
-                factor = config["rope_scaling"].get("factor")
-                original_max_position_embeddings = config["rope_scaling"].get("original_max_position_embeddings")
-                max_position_embeddings = int(factor * original_max_position_embeddings)
-                
-            elif config.get("text_config"):
-                max_position_embeddings = config["text_config"].get("max_position_embeddings")
-            else:
-                max_position_embeddings = config.get("max_position_embeddings")
-            return max_position_embeddings
-
-        except Exception as e:
-            raise RuntimeError(f"Failed to get max_position_embeddings from {config_path}") from e
-        
+        return model_info        
 
     def _handle_load_error(self, model_path: str, error: Exception) -> TaskResponse:
         """ロードエラーを処理"""
