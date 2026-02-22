@@ -58,6 +58,15 @@ In this case, there are four models are stored in the models directory. "Mistral
     └── gemma-2b.gguf
 ```
 
+`/v1/internal/model/info/{model_name}`
+
+Get model information. Returns `context_length`, `model_type`, `file_size_gb`, etc.
+
+```console
+$ curl http://localhost:4000/v1/internal/model/info/gemma-3-270m-it-8bit'
+
+{"model_name":"gemma-3-270m-it-8bit","model_path":"models/gemma-3-270m-it-8bit","model_type":"mlx","file_size_gb":0,"is_loaded":false,"context_length":32768,"hidden_size":640,"num_layers":18,"vocab_size":262144}
+
 `/v1/internal/model/load`
 
 Load a specific model. If the load is successful, {"load": "success"} is return.

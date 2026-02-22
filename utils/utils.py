@@ -163,8 +163,5 @@ def get_model_details(model_name: str) -> dict:
     if not is_gguf:
         config_details = get_mlx_model_config(model_path)
         result.update(config_details)
-        result["supports_kv_cache"] = "config_error" not in config_details
-    else:
-        result["supports_kv_cache"] = False
 
     return result
