@@ -35,6 +35,9 @@ env/
 # Pyenv
 .python-version
 
+# pytest
+.pytest_cache
+
 # VS Code
 .vscode/
 

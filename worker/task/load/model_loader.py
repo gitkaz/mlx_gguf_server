@@ -9,6 +9,7 @@ import json
 from ...task_response import TaskResponse
 from ...llm_model import LLMModel
 from schemas import ModelLoadParams
+from utils.utils import get_mlx_context_length
 
 from ...logger_config import setup_logger
 log_level = os.environ.get("LOG_LEVEL", "INFO")
@@ -71,7 +72,7 @@ class ModelLoader:
         use_trust = trust_remote_code if trust_remote_code is not None else False
         try:
             model, tokenizer = mlx_lm.load(model_path, tokenizer_config={"trust_remote_code": use_trust}, adapter_path=adapter_path, lazy=True)
-            context_length = self._get_mlx_context_length(model_path)
+            context_length = get_mlx_context_length(model_path)
 
             return {
                 "model": model,
