@@ -20,6 +20,7 @@ class CompletionParams(BaseModel):
     use_kv_cache: bool = False                    # mlx only
     kv_cache_threshold: Optional[int] = 5000      # mlx only  
     tools: Optional[list] = None                  # mlx only
+    enable_thinking: Optional[bool] = None        # mlx only
     top_k: int = 0                      # llama-cpp only
     min_p: float = 0.05                 # llama-cpp only
     typical_p: float = 1.0              # llama-cpp only

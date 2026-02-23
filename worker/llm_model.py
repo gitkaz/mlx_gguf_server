@@ -10,3 +10,4 @@ class LLMModel:
     model_name: str = ""
     default_gen_params: Dict[str, Any] = field(default_factory=dict)
     context_length: int = 0
+    capabilities: Dict[str, Any] = field(default_factory=dict)
