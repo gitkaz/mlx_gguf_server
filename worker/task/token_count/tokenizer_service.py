@@ -54,19 +54,10 @@ class TokenizerService:
         Returns:
             Modified chat template string
         """
-        # Check if template already has the thinking variable
-        if thinking_variable in template:
-            # Replace existing thinking variable setting
-            pattern = r'\{%-?\s*set\s+' + re.escape(thinking_variable) + r'\s*=\s*(true|false)\s*-?%\}'
-            replacement = f'{{%- set {thinking_variable} = {"true" if enable_thinking else "false"} %}}'
-            modified = re.sub(pattern, replacement, template, flags=re.IGNORECASE)
-            logger.debug(f"Replaced existing {thinking_variable} setting: {enable_thinking}")
-            return modified
-        else:
-            # Add thinking variable at the beginning of the template
-            thinking_directive = f'{{%- set {thinking_variable} = {"true" if enable_thinking else "false"} %}}\n'
-            logger.debug(f"Added {thinking_variable} directive: {enable_thinking}")
-            return thinking_directive + template
+        # Add thinking variable at the beginning of the template
+        thinking_directive = f'{{%- set {thinking_variable} = {"true" if enable_thinking else "false"} %}}\n'
+        logger.debug(f"Added {thinking_variable} directive: {enable_thinking}")
+        return thinking_directive + template
 
 
     def apply_chat_template(
