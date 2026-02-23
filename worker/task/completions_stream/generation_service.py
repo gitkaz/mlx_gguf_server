@@ -35,6 +35,7 @@ class GenerationService:
             raise TypeError("First argument must be LLMModel instance")
         
         self.model = llm_model.model
+        self.model_capabilities = llm_model.capabilities
         self.tokenizer :PreTrainedTokenizer = llm_model.tokenizer
         self.model_type :str = llm_model.model_type
         self.model_name :str = llm_model.model_name
@@ -93,7 +94,9 @@ class GenerationService:
                     tokenizer=tokenizer,
                     messages=messages,
                     add_generation_prompt=True,
-                    tools=gen_params.tools
+                    tools=gen_params.tools,
+                    enable_thinking=gen_params.enable_thinking,
+                    model_capabilities=self.model_capabilities
                 )
                 prompt_tokens = tokenizer.encode(prompt)
             else:
