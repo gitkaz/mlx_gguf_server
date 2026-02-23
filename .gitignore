@@ -68,3 +68,6 @@ worker/kv_cache/data/*
 # Exclude test directory for now
 requirements-dev.txt
 tests/
+
+# Exclude MODEL_CAPABILITY Config
+config/

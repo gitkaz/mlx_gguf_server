@@ -17,6 +17,48 @@ logger = setup_logger(__name__, level=log_level)
 
 
 class ModelLoader:
+    def __init__(self):
+        self.model_capabilities = self._load_capabilities()
+
+    def _load_capabilities(self) -> dict:
+        """Load model capabilities from environment variable"""
+        import os
+        import json
+
+        default_config = {
+            "models": {},
+            "defaults": {
+                "supports_thinking_toggle": False,
+                "thinking_variable": None,
+                "default_thinking": True
+            }
+        }
+
+        try:
+            capabilities_json = os.environ.get("MODEL_CAPABILITIES")
+            if capabilities_json:
+                return json.loads(capabilities_json)
+        except Exception as e:
+            logger.warning(f"Failed to parse MODEL_CAPABILITIES: {e}")
+
+        return default_config
+
+    def get_model_capabilities(self, model_name: str) -> dict:
+        """Get capabilities for a specific model"""
+        models = self.model_capabilities.get("models", {})
+        defaults = self.model_capabilities.get("defaults", {})
+
+        # Exact match
+        if model_name in models:
+            return {**defaults, **models[model_name]}
+
+        # Partial match (for version variants)
+        for pattern, caps in models.items():
+            if pattern in model_name:
+                return {**defaults, **caps}
+
+        return defaults
+
     def load(self, llm_model: LLMModel, params: ModelLoadParams) -> TaskResponse:
         """
         LLMModelインスタンスを直接操作してモデルをロード
@@ -55,6 +97,10 @@ class ModelLoader:
 
             # 5. レスポンス用データの作成
             model_info = self._create_model_info(llm_model, load_time)
+
+            # 6. Set model capabilities
+            llm_model.capabilities = self.get_model_capabilities(llm_model.model_name)
+            logger.debug(f"Model capabilities set: {llm_model.capabilities}")
 
             return TaskResponse.create(200, model_info)
 

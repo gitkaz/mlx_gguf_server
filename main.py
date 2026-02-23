@@ -36,6 +36,23 @@ logging.basicConfig(level=logging.INFO)
 async def lifespan(app: FastAPI):
     logger.info("starting....")
 
+    # ===== Load Model Capabilities Configuration =====
+    config_path = Path(__file__).parent / "config" / "model_capabilities.json"
+    if config_path.exists():
+        try:
+            with open(config_path, "r") as f:
+                capabilities_config = json.load(f)
+            # Set as environment variable (inherited by worker processes)
+            os.environ["MODEL_CAPABILITIES"] = json.dumps(capabilities_config)
+            logger.info(f"Loaded model capabilities from {config_path}")
+        except Exception as e:
+            logger.warning(f"Failed to load model capabilities: {e}. Using defaults.")
+            os.environ["MODEL_CAPABILITIES"] = json.dumps({"models": {}, "defaults": {}})
+    else:
+        logger.info("model_capabilities.json not found. Using defaults.")
+        os.environ["MODEL_CAPABILITIES"] = json.dumps({"models": {}, "defaults": {}})
+    # =================================================
+
     # ===== ログディレクトリの作成とロガー設定 =====
     os.makedirs("logs", exist_ok=True)
 
