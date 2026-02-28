@@ -1,4 +1,4 @@
-from pydantic import BaseModel, model_validator, Field
+from pydantic import BaseModel, model_validator, Field, ConfigDict
 from typing_extensions import Self
 from typing import Optional, Dict, List, Union, Literal
 
@@ -39,18 +39,6 @@ class CompletionParams(BaseModel):
             raise ValueError("Only one of 'prompt' or 'messages' should be provided.")
         return self
 
-class TokenCountParams(BaseModel):
-    model: str = "dummy"
-    prompt: str = ""
-    messages: list[dict] = []
-
-    @model_validator(mode='after')
-    def validate_prompt_and_messages(self) -> Self:
-        prompt = self.prompt
-        messages = self.messages
-        if prompt and messages:
-            raise ValueError("Only one of 'prompt' or 'messages' should be provided.")
-        return self
 
 class ModelLoadParams(BaseModel):
     llm_model_name: str
@@ -101,3 +89,37 @@ class EmbeddingsParams(BaseModel):
         default=None,
         description="The number of dimensions the resulting output embeddings should have."
     )
+
+class InputTokenCountParams(BaseModel):
+    """
+    Parameters for OpenAI-compatible input token counting API.
+    Ref: https://developers.openai.com/api/reference/resources/responses/subresources/input_tokens/methods/count
+    """
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "model": "gemma-3-270m-it-8bit",
+                "input": "Hello, world!"
+            }
+        }
+    )
+
+    model: str = Field(..., min_length=1, description="Model ID to use for tokenization")
+    input: str = Field(..., description="Text input to tokenize")
+
+class InputTokenCountResponse(BaseModel):
+    """
+    Response for OpenAI-compatible input token counting API.
+    """
+    object: str = "response.input_tokens"
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "object": "response.input_tokens",
+                "input_tokens": 4
+            }
+        }
+    )
+
+    object: str = "response.input_tokens"
+    input_tokens: int
