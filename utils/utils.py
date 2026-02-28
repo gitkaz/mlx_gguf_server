@@ -60,11 +60,31 @@ def create_adapter_list():
 
     return adapters
 
+def _calculate_rope_context_length(rope_config: dict) -> int | None:
+    """
+    Calculate context length from rope_scaling or rope_parameters config.
+
+    Args:
+        rope_config: Dictionary containing rope scaling parameters
+
+    Returns:
+        int: Calculated context length, or None if parameters are missing
+    """
+    if not rope_config:
+        return None
+
+    factor = rope_config.get("factor")
+    original_max = rope_config.get("original_max_position_embeddings")
+
+    if factor and original_max:
+        return int(factor * original_max)
+
+    return None
 
 def get_mlx_context_length(model_path: str) -> int:
     """
     Get context length from MLX model's config.json.
-    Handles rope_scaling and various config structures.
+    Handles rope_scaling, rope_parameters, and various config structures.
 
     Args:
         model_path: Path to the MLX model directory
@@ -80,20 +100,39 @@ def get_mlx_context_length(model_path: str) -> int:
         with open(config_path, "r") as f:
             config = json.load(f)
 
-        if config.get("rope_scaling") and config["rope_scaling"].get("factor"):
-            factor = config["rope_scaling"].get("factor")
-            original_max_position_embeddings = config["rope_scaling"].get("original_max_position_embeddings")
-            max_position_embeddings = int(factor * original_max_position_embeddings)
-        elif config.get("text_config"):
-            max_position_embeddings = config["text_config"].get("max_position_embeddings")
-        else:
-            max_position_embeddings = config.get("max_position_embeddings")
+        max_position_embeddings = None
+
+        # Check for text_config first (multimodal models)
+        if config.get("text_config"):
+            text_config = config["text_config"]
+
+            # Check for rope_parameters inside text_config
+            if text_config.get("rope_parameters"):
+                max_position_embeddings = _calculate_rope_context_length(text_config["rope_parameters"])
+
+            # Check for rope_scaling inside text_config
+            if max_position_embeddings is None and text_config.get("rope_scaling"):
+                max_position_embeddings = _calculate_rope_context_length(text_config["rope_scaling"])
+
+            # Fall back to direct max_position_embeddings in text_config
+            if max_position_embeddings is None:
+                max_position_embeddings = text_config.get("max_position_embeddings")
+
+        # If no text_config, check root level (text-only models)
+        if max_position_embeddings is None:
+            if config.get("rope_scaling"):
+                max_position_embeddings = _calculate_rope_context_length(config["rope_scaling"])
+
+            if max_position_embeddings is None:
+                max_position_embeddings = config.get("max_position_embeddings")
+
+        if max_position_embeddings is None:
+            raise RuntimeError(f"Could not find max_position_embeddings in {config_path}")
 
         return max_position_embeddings
 
     except Exception as e:
         raise RuntimeError(f"Failed to get max_position_embeddings from {config_path}") from e
-
 
 def get_mlx_model_config(model_path: str) -> dict:
     """
