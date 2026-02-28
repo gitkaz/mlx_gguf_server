@@ -8,7 +8,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
 from worker.llm_process import start_llm_process
-from schemas import CompletionParams, TokenCountParams, ModelLoadParams
+from schemas import CompletionParams, ModelLoadParams, InputTokenCountParams
 import logging
 
 logger = logging.getLogger("uvicorn")
@@ -95,7 +95,7 @@ class LLMProcess:
         self.response_queue.put(None)
 
 
-    async def task_request_streaming(self, task: str, params: Union[CompletionParams, TokenCountParams, ModelLoadParams]):
+    async def task_request_streaming(self, task: str, params: Union[CompletionParams, ModelLoadParams, InputTokenCountParams]):
         request_id = str(uuid.uuid4())
         
         # 1. ストリーミング受取用の内部Queueを作成
@@ -159,7 +159,7 @@ class LLMProcess:
                 del self.pending_requests[request_id]
 
 
-    async def task_request(self, task: str, params: Union[CompletionParams, TokenCountParams, ModelLoadParams]):
+    async def task_request(self, task: str, params: Union[CompletionParams, ModelLoadParams, InputTokenCountParams]):
         request_id = str(uuid.uuid4())
         
         loop = asyncio.get_running_loop()
@@ -191,7 +191,7 @@ class LLMProcess:
         return status, message
 
 
-    async def add_request_to_queue(self, task: str, params: Union[CompletionParams, TokenCountParams, ModelLoadParams]) -> str:
+    async def add_request_to_queue(self, task: str, params: Union[CompletionParams, ModelLoadParams, InputTokenCountParams]) -> str:
         request_id = str(uuid.uuid4())
         current_time = time.time()
         await asyncio.get_event_loop().run_in_executor(None, self.request_queue.put, (task, request_id, params))

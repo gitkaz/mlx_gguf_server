@@ -21,7 +21,8 @@ import tts.kokoro_tts.run_process
 import embedding.run_process
 
 from core.process_manager import LLMProcess
-from schemas import CompletionParams, TokenCountParams, ModelLoadParams, ProcessCleanParams, KokoroTtsParams, EmbeddingsParams
+from schemas import CompletionParams, ModelLoadParams, ProcessCleanParams, KokoroTtsParams, EmbeddingsParams
+from schemas import InputTokenCountParams, InputTokenCountResponse
 from embedding.embedding_schemas import OpenAICompatibleEmbeddings
 from utils.utils import create_model_list, create_adapter_list, get_model_size, get_unload_candidates, get_model_details
 from utils.kv_cache_utils import prepare_temp_dir, validate_filename, process_upload_file, get_kv_cache_abs_path
@@ -461,16 +462,55 @@ async def post_completion(request:Request, params: CompletionParams, model_id: s
             raise HTTPException(status_code=status_code, detail=response)
 
 
-@app.post("/v1/internal/token-count")
-async def post_token_count(params: TokenCountParams, model_id: str = Header(default="0", alias="X-Model-Id")):
-    llm_process: LLMProcess = get_llm_process(model_id)
+@app.post("/responses/input_tokens", response_model=InputTokenCountResponse)
+async def post_responses_input_tokens(params: InputTokenCountParams):
+    """
+    Count input tokens for a given text.
+    OpenAI API compatible endpoint.
 
-    status_code, response = await llm_process.task_request('token-count', params)
-    if status_code == 200:
-        return {'length': response}
-    else: 
-        raise HTTPException(status_code=status_code, detail=response)
+    Only supports MLX models. Model must be pre-loaded (auto-load not supported).
+    Model is identified from the 'model' parameter in the request body.
+    """
+    try:
+        # Validate model parameter
+        if not params.model:
+            raise HTTPException(status_code=400, detail="Model parameter is required")
 
+        # Check if model is loaded
+        if params.model not in app.state.loaded_models:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Model '{params.model}' is not loaded. Please load the model first."
+            )
+
+        # Get model_id from loaded_models
+        model_id = app.state.loaded_models[params.model]['id']
+        llm_process: LLMProcess = get_llm_process(model_id)
+
+        # Verify model is MLX type
+        if llm_process.model_info.get("model_type") != "mlx":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Only MLX models are supported. This model is: {llm_process.model_info.get('model_type')}"
+            )
+
+        # Call tokenizer service
+        status_code, response = await llm_process.task_request('token-count', params)
+
+        if status_code == 200:
+            return InputTokenCountResponse(
+                object="response.input_tokens",
+                input_tokens=response
+            )
+        else:
+            raise HTTPException(status_code=status_code, detail=response)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in /responses/input_tokens: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+    
 
 @app.get("/v1/internal/model/info/{model_name}")
 async def get_v1_internal_model_info(model_name: str):
