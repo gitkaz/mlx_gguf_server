@@ -175,6 +175,34 @@ def terminate_llm_process(model_id: str):
         error_message = f"Terminate process failed. model_id = {model_id} not found."
         return False, error_message
 
+
+def _parse_model_thinking_param(model_name: str, params: CompletionParams) -> CompletionParams:
+    """
+    Parse model name suffixes to override enable_thinking parameter.
+    Also strips the suffix from params.model for downstream lookups.
+
+    Examples:
+        "model-thinking" → enable_thinking=True, params.model="model"
+        "model-no-thinking" → enable_thinking=False, params.model="model"
+        "model" → no override, params.model="model"
+    """
+    # Create a copy to avoid mutating the original
+    params = params.model_copy()
+
+    # Check more specific pattern first (-no-thinking contains -thinking)
+    if model_name.endswith("-no-thinking"):
+        params.enable_thinking = False
+        params.model = model_name[:-12]  # Strip "-no-thinking"
+    elif model_name.endswith("-thinking"):
+        params.enable_thinking = True
+        params.model = model_name[:-9]  # Strip "-thinking"
+    else:
+        # No suffix, keep model name as-is
+        params.model = model_name
+
+    return params
+
+
 def _get_next_auto_load_id():
     """Get next available ID in the auto-load range (e.g., 100-199)"""
     base = 100
@@ -405,6 +433,9 @@ async def post_completion(request:Request, params: CompletionParams, model_id: s
 
     if request.url.path == "/v1/chat/completions":
         params.apply_chat_template = True
+
+    if hasattr(params, "model") and params.model:
+        params = _parse_model_thinking_param(params.model, params)
 
     if "X-Model-Id" not in request.headers and hasattr(params, "model") and params.model:
         if params.model in app.state.loaded_models:
