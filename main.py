@@ -176,33 +176,6 @@ def terminate_llm_process(model_id: str):
         return False, error_message
 
 
-def _parse_model_thinking_param(model_name: str, params: CompletionParams) -> CompletionParams:
-    """
-    Parse model name suffixes to override enable_thinking parameter.
-    Also strips the suffix from params.model for downstream lookups.
-
-    Examples:
-        "model-thinking" → enable_thinking=True, params.model="model"
-        "model-no-thinking" → enable_thinking=False, params.model="model"
-        "model" → no override, params.model="model"
-    """
-    # Create a copy to avoid mutating the original
-    params = params.model_copy()
-
-    # Check more specific pattern first (-no-thinking contains -thinking)
-    if model_name.endswith("-no-thinking"):
-        params.enable_thinking = False
-        params.model = model_name[:-12]  # Strip "-no-thinking"
-    elif model_name.endswith("-thinking"):
-        params.enable_thinking = True
-        params.model = model_name[:-9]  # Strip "-thinking"
-    else:
-        # No suffix, keep model name as-is
-        params.model = model_name
-
-    return params
-
-
 def _get_next_auto_load_id():
     """Get next available ID in the auto-load range (e.g., 100-199)"""
     base = 100
@@ -214,6 +187,7 @@ def _get_next_auto_load_id():
             return candidate_id
 
     raise RuntimeError("No available model IDs in auto-load range")
+
 
 async def _load_model(params: ModelLoadParams, model_id: str) -> tuple[bool, str]:
     """
@@ -332,6 +306,7 @@ async def _load_model(params: ModelLoadParams, model_id: str) -> tuple[bool, str
             terminate_llm_process(model_id)
         return False, str(e)
 
+
 def _unload_model(model_id: str) -> tuple[bool, str]:
     """Internal function to unload a model by ID (used by both API and auto-unload)"""
     try:
@@ -365,6 +340,113 @@ def create_llm_process(model_id: str) -> LLMProcess:
     app.state.llm_processes[model_id] = llm_process
     llm_process.start()
     return llm_process
+
+
+def _strip_thinking_suffix_from_model_name(model_name: str) -> tuple[str, Optional[bool]]:
+    """
+    Strip thinking suffix from model name.
+    Returns: (base_model_name, enable_thinking or None)
+    """
+    if model_name.endswith("-no-thinking"):
+        return model_name[:-12], False
+    elif model_name.endswith("-thinking"):
+        return model_name[:-9], True
+    return model_name, None
+
+
+def _parse_model_thinking_param(model_name: str, params: CompletionParams) -> CompletionParams:
+    """
+    Parse model name suffix and update CompletionParams accordingly.
+
+    Returns a NEW CompletionParams object (doesn't mutate input).
+    """
+    params = params.model_copy()
+    base_name, thinking_flag = _strip_thinking_suffix_from_model_name(model_name)
+
+    if thinking_flag is not None:
+        params.enable_thinking = thinking_flag
+
+    params.model = base_name
+    return params
+
+
+async def resolve_model_id(
+    model_name: str, 
+    allow_auto_load: bool = False,
+    request_params: Optional[CompletionParams] = None
+) -> str:
+    """
+    Resolve a model name to a model_id.
+
+    Args:
+        model_name: The model name from the request (may include thinking suffixes)
+        allow_auto_load: If True, attempt to auto-load the model if not already loaded.
+                        If False, raise HTTPException if model is not loaded.
+        request_params: Optional CompletionParams for passing generation params to auto-load.
+                       Used to preserve temperature, max_tokens, etc. when auto-loading.
+
+    Returns:
+        str: The model_id for the loaded model
+
+    Raises:
+        HTTPException: If model is not found, not loaded (and auto-load disabled), 
+                      or auto-load fails.
+    """
+
+    # Strip suffix to get the actual model name for lookup
+    resolved_model_name, _ = _strip_thinking_suffix_from_model_name(model_name)
+
+    # Validate model exists
+    if resolved_model_name not in app.state.models:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Model '{resolved_model_name}' not found."
+        )
+
+    # Check if already loaded
+    if resolved_model_name in app.state.loaded_models:
+        return app.state.loaded_models[resolved_model_name]['id']
+
+    # Handle auto-load
+    if allow_auto_load:
+        # Find available model ID in auto-load range
+        auto_load_id = _get_next_auto_load_id()
+
+        # Create ModelLoadParams with auto-load defaults
+        auto_load_params = ModelLoadParams(
+            llm_model_name=resolved_model_name,
+            auto_unload=True,
+            priority=0,
+            use_kv_cache=True,
+            trust_remote_code=False,
+            # Preserve generation params from request if provided
+            temperature=request_params.temperature if request_params else None,
+            max_tokens=request_params.max_tokens if request_params else None,
+        )
+
+        # Attempt to load the model
+        success, message = await _load_model(auto_load_params, auto_load_id)
+
+        if not success:
+            logger.error(f"Auto-load failed for {resolved_model_name}: {message}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to auto-load model '{resolved_model_name}': {message}"
+            )
+
+        logger.info(f"Auto-loaded model '{resolved_model_name}' with model_id: {auto_load_id}")
+
+        return auto_load_id
+
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Model '{resolved_model_name}' is not loaded."
+        )
+
+
+
+
 
 @app.get("/webui", response_class=HTMLResponse)
 async def webui(request: Request):
@@ -434,11 +516,7 @@ async def post_completion(request: Request, params: CompletionParams):
             detail="'model' field is required in the request body"
         )
 
-    # ===== 2. Parse thinking suffix from model name =====
-    params = _parse_model_thinking_param(params.model, params)
-    requested_model = params.model  # Model name after suffix stripping
-
-    # ===== 3. Validate request type =====
+    # ===== 2. Validate request type =====
     if request.url.path == "/v1/completions" and params.prompt == "":
         raise HTTPException(status_code=400, detail="/v1/completions needs prompt string")
     if request.url.path == "/v1/chat/completions" and params.messages == []:
@@ -447,46 +525,12 @@ async def post_completion(request: Request, params: CompletionParams):
     if request.url.path == "/v1/chat/completions":
         params.apply_chat_template = True
 
-    # ===== 4. Resolve model_id from loaded_models or auto-load =====
-    model_id = None
 
-    # Check if model is already loaded
-    if requested_model in app.state.loaded_models:
-        model_id = app.state.loaded_models[requested_model]['id']
+    # ===== 3: Resolve model_id (may auto-load)
+    model_id = await resolve_model_id(params.model, allow_auto_load=True, request_params=params)
 
-    # Model not loaded - attempt auto-load if enabled
-    elif requested_model not in app.state.loaded_models:
-        if not app.state.auto_load_enabled:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Model '{requested_model}' is not loaded. Auto-load is disabled."
-            )
-
-        # Find an available model ID in auto-load range
-        auto_load_id = _get_next_auto_load_id()
-
-        # Create ModelLoadParams with auto-load defaults
-        auto_load_params = ModelLoadParams(
-            llm_model_name=requested_model,
-            auto_unload=True,
-            priority=0,
-            use_kv_cache=True,
-            trust_remote_code=False,
-            temperature=params.temperature if hasattr(params, "temperature") else None,
-            max_tokens=params.max_tokens if hasattr(params, "max_tokens") else None
-        )
-
-        # Load the model
-        success, message = await _load_model(auto_load_params, auto_load_id)
-
-        if not success:
-            logger.error(f"Auto-load failed for {requested_model}: {message}")
-            raise HTTPException(
-                status_code=500, 
-                detail=f"Failed to auto-load model '{requested_model}': {message}"
-            )
-
-        model_id = auto_load_id
+    # ===== 4. Parse thinking suffix from model name =====
+    params = _parse_model_thinking_param(params.model, params)
 
     # ===== 5. Get LLM process and execute request =====
     llm_process: LLMProcess = get_llm_process(model_id)
@@ -518,15 +562,9 @@ async def post_responses_input_tokens(params: InputTokenCountParams):
         if not params.model:
             raise HTTPException(status_code=400, detail="Model parameter is required")
 
-        # Check if model is loaded
-        if params.model not in app.state.loaded_models:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Model '{params.model}' is not loaded. Please load the model first."
-            )
-
         # Get model_id from loaded_models
-        model_id = app.state.loaded_models[params.model]['id']
+        model_id = await resolve_model_id(params.model, allow_auto_load=False)
+
         llm_process: LLMProcess = get_llm_process(model_id)
 
         # Verify model is MLX type
