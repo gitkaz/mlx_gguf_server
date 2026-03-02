@@ -424,8 +424,21 @@ def get_v1_models():
 
 @app.post("/v1/completions")
 @app.post("/v1/chat/completions")
-async def post_completion(request:Request, params: CompletionParams, model_id: str = Header(default="0", alias="X-Model-Id")):
+async def post_completion(request: Request, params: CompletionParams):
+    # ===== 1. Validate 'model' field is present =====
+    # Check if model was actually sent in the request (not just default)
+    raw_json = await request.json()
+    if "model" not in raw_json or not raw_json.get("model") or raw_json.get("model").strip() == "":
+        raise HTTPException(
+            status_code=400, 
+            detail="'model' field is required in the request body"
+        )
 
+    # ===== 2. Parse thinking suffix from model name =====
+    params = _parse_model_thinking_param(params.model, params)
+    requested_model = params.model  # Model name after suffix stripping
+
+    # ===== 3. Validate request type =====
     if request.url.path == "/v1/completions" and params.prompt == "":
         raise HTTPException(status_code=400, detail="/v1/completions needs prompt string")
     if request.url.path == "/v1/chat/completions" and params.messages == []:
@@ -434,36 +447,31 @@ async def post_completion(request:Request, params: CompletionParams, model_id: s
     if request.url.path == "/v1/chat/completions":
         params.apply_chat_template = True
 
-    if hasattr(params, "model") and params.model:
-        params = _parse_model_thinking_param(params.model, params)
+    # ===== 4. Resolve model_id from loaded_models or auto-load =====
+    model_id = None
 
-    if "X-Model-Id" not in request.headers and hasattr(params, "model") and params.model:
-        if params.model in app.state.loaded_models:
-            model_id = app.state.loaded_models[params.model]['id']
-        else:
-            if app.state.auto_load_enabled is False:
-                raise HTTPException(status_code=400, detail=f"Model '{params.model}' not exist.")
+    # Check if model is already loaded
+    if requested_model in app.state.loaded_models:
+        model_id = app.state.loaded_models[requested_model]['id']
 
-    # Auto-load logic
-    requested_model = None
-    if hasattr(params, "model") and params.model:
-        requested_model = params.model
-
-    if requested_model and requested_model not in app.state.loaded_models:
+    # Model not loaded - attempt auto-load if enabled
+    elif requested_model not in app.state.loaded_models:
         if not app.state.auto_load_enabled:
-            raise HTTPException(status_code=400, detail=f"Model '{requested_model}' not loaded. Auto-load is disabled.")
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Model '{requested_model}' is not loaded. Auto-load is disabled."
+            )
 
-        # Find an available model ID
+        # Find an available model ID in auto-load range
         auto_load_id = _get_next_auto_load_id()
 
         # Create ModelLoadParams with auto-load defaults
         auto_load_params = ModelLoadParams(
             llm_model_name=requested_model,
-            auto_unload=True,         # Always auto-unload for auto-loaded models
-            priority=0,               # Default priority
-            use_kv_cache=True,        # Enable KV cache by default
-            trust_remote_code=False,  # Auto-loaded models should not trust remote code by default
-            # Copy other parameters from request if needed
+            auto_unload=True,
+            priority=0,
+            use_kv_cache=True,
+            trust_remote_code=False,
             temperature=params.temperature if hasattr(params, "temperature") else None,
             max_tokens=params.max_tokens if hasattr(params, "max_tokens") else None
         )
@@ -473,11 +481,14 @@ async def post_completion(request:Request, params: CompletionParams, model_id: s
 
         if not success:
             logger.error(f"Auto-load failed for {requested_model}: {message}")
-            raise HTTPException(status_code=500, detail=f"Failed to auto-load model '{requested_model}'")
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Failed to auto-load model '{requested_model}': {message}"
+            )
 
-        # Update model_id to use the newly loaded model
         model_id = auto_load_id
 
+    # ===== 5. Get LLM process and execute request =====
     llm_process: LLMProcess = get_llm_process(model_id)
 
     if params.stream:
