@@ -2,7 +2,7 @@ fastapi
 apscheduler
 sse_starlette
 pydantic
-mlx_lm==0.30.7
+mlx_lm==0.31.0
 mlx-whisper
 uvicorn
 torch
@@ -15,3 +15,4 @@ scipy
 pydub
 einops
 python-multipart
+ 
