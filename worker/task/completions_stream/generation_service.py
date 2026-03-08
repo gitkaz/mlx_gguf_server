@@ -7,7 +7,6 @@ import json
 import logging
 
 import mlx.core as mx
-import mlx.nn as nn
 
 from mlx_lm.generate import stream_generate
 from mlx_lm.sample_utils import make_sampler, make_logits_processors
@@ -57,8 +56,10 @@ class GenerationService:
             yield TaskResponse.create(500, {"error": error_msg}).to_dict()
 
         try:
-            if self.model_type == "mlx":
+            if self.model_type == "mlx" and self.params.experimental_generate:
                 yield from self._generate_mlx_exp()
+            elif self.model_type == "mlx":
+                yield from self._generate_mlx()
             elif self.model_type == "llama-cpp":
                 yield from self._generate_llama_cpp()
             else:
@@ -68,7 +69,7 @@ class GenerationService:
 
     def _generate_mlx_exp(self) -> Generator[Dict[str, Any], None, None]:
 
-
+        logger.debug("*** experimental text generate ***")
         model = self.model
         model_name = self.model_name
         tokenizer = self.tokenizer
@@ -124,18 +125,27 @@ class GenerationService:
                     # add_generation_token によって prompt が拡張されていないため、固定的に最後の1トークンをsuffix_tokensとする
                     suffix_tokens = [original_prompt_token[-1]]
                     original_prompt_token = original_prompt_token[:-1]
+                    logger.debug(f"{original_prompt_token=}")
+                    logger.debug(f"decoded original_prompt_token={tokenizer.decode(original_prompt_token)}")
 
                 # original_prompt_token を元に　kv_cache を探査する
-                kv_cache, start_index, kv_load_stats = self.kvcache_manager.load_kv_cache(model_name, original_prompt_token)
+                # すべてのKV Cacheについて Trim を許容しない
+                kv_cache, kvc_metadata, start_index, kv_load_stats = self.kvcache_manager.load_kv_cache(model_name, original_prompt_token, allow_trim=False)
 
                 if kv_cache:
-                    # kv cacheが見つかった場合、prefillに送信するtokenは、kv cache に含まれていない部分のみ（残差=delta）となる
+                    if logger.isEnabledFor(logging.DEBUG):
+                        token_ids_from_kv_cache_metadata = json.loads(kvc_metadata["tokens"])
+                        logger.debug(f"matched token confrimation: from kv cache: \"{tokenizer.decode(token_ids_from_kv_cache_metadata[:start_index])}\"")
+                        logger.debug(f"matched token confrimation: from prompt: \"{tokenizer.decode(original_prompt_token[:start_index])}\"")
+                    # kv cacheが見つかった場合、prefillに送信するtokenは、kv cache に含まれていない部分のみ（差分=delta）となる
                     delta_token_ids = original_prompt_token[start_index:]
                 else:
                     # kv cacheが見つからなかったので、kv cacheは新規に作成する。prefillに送信するtokenは、original_prompt_token全体となる
                     logger.info(f"kv cache hit failed. create a new kv cache.")
                     kv_cache, kv_load_stats = self.kvcache_manager.make_new_cache(model)
                     delta_token_ids = original_prompt_token
+
+                logger.debug(f"debug in _generate_mlx_exp: delta_token_ids={delta_token_ids}. text=\"{tokenizer.decode(delta_token_ids)}\"")
 
                 # prefillの実行
                 delta_token_array = mx.array(delta_token_ids)
@@ -159,6 +169,23 @@ class GenerationService:
                     "prompt": self.tokenizer.decode(original_prompt_token)
                 }
             )
+
+            # KV Cacheの保存
+            is_kv_cache_saved = False
+            if gen_params.use_kv_cache and kv_cache is not None:
+                should_save = (len(delta_token_ids) > gen_params.kv_cache_threshold)
+                if should_save:
+                    logger.debug(f"delta token lengh ({len(delta_token_ids)}) overed the threashold ({gen_params.kv_cache_threshold}). save kv cache.")
+
+                    cached_tokens = copy.deepcopy(original_prompt_token)
+
+                    kv_cache_metadata["model_name"] = str(model_name)
+                    kv_cache_metadata["chat_template"] = str(tokenizer.chat_template)
+                    kv_cache_metadata["tokens"] = json.dumps(cached_tokens)
+                    kv_cache_metadata["token_count"] = str(len(cached_tokens))
+                    self.kvcache_manager.save_kv_cache(message_id=request_id, kv_cache=kv_cache, metadata=kv_cache_metadata)
+                    is_kv_cache_saved = True
+
 
             for item in stream_generate(
                 model=model,
@@ -205,26 +232,11 @@ class GenerationService:
             response = self._create_usage_response(request_id, created_time, model_name)
             response["usage"] = self._calculate_usage(prompt, all_generated_tokens, tokenizer, *perf_timer)
 
-            # KV Cacheの保存
-            if gen_params.use_kv_cache and kv_cache is not None:
-                should_save = (len(original_prompt_token) > gen_params.kv_cache_threshold)
-                if should_save:
-                    logger.debug(f"prompt_token lengh ({len(original_prompt_token)}) overed the threashold ({gen_params.kv_cache_threshold}). save kv cache.")
-
-                    cached_tokens = original_prompt_token
-                    if cached_tokens[-1] in tokenizer.eos_token_ids:
-                        cached_tokens = cached_tokens[:-1]
-
-                    kv_cache_metadata["model_name"] = str(model_name)
-                    kv_cache_metadata["chat_template"] = str(tokenizer.chat_template)
-                    kv_cache_metadata["tokens"] = json.dumps(cached_tokens)
-                    kv_cache_metadata["token_count"] = str(len(cached_tokens))
-                    self.kvcache_manager.save_kv_cache(message_id=request_id, kv_cache=kv_cache, metadata=kv_cache_metadata)
-
-                    response["usage"]["kv_cache"] = {
-                        "cached_tokens": kv_cache_metadata["token_count"],
-                        "stats": kv_load_stats
-                    }
+            if is_kv_cache_saved:
+                response["usage"]["kv_cache"] = {
+                    "cached_tokens": kv_cache_metadata["token_count"],
+                    "stats": kv_load_stats
+                }
 
             yield response
 
@@ -280,7 +292,7 @@ class GenerationService:
 
             # prompt_tokens based load kv cache
             if gen_params.use_kv_cache:
-                kv_cache, start_index, kv_load_stats = self.kvcache_manager.load_kv_cache(model_name, prompt_tokens)
+                kv_cache, _, start_index, kv_load_stats = self.kvcache_manager.load_kv_cache(model_name, prompt_tokens)
 
                 # Cache hit by prompt_tokens based load_kv_cache
                 if kv_cache is not None:
