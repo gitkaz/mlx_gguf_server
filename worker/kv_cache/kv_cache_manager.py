@@ -64,7 +64,7 @@ class KVCacheManager:
             if cached_tokens[i] != prompt_tokens[i]:
                 break
             common_len = i + 1
-        
+
         return common_len
     
 
@@ -95,7 +95,7 @@ class KVCacheManager:
         return cache, metadata
 
 
-    def _find_best_match_cache(self, model_name: str, all_metadata: Dict[str, Dict], prompt_tokens:List):
+    def _find_best_match_cache(self, model_name: str, all_metadata: Dict[str, Dict], prompt_tokens:List, allow_trim:bool = True):
         """
         Searches for the KV Cache file to load.
         Conditions
@@ -107,10 +107,19 @@ class KVCacheManager:
         best_match = {
             "common_len": 0,
             "file_path": None,
-        }    
+        }
 
         # Check each cache file for the best token match
         for file_path, metadata in all_metadata.items():
+
+            is_trimmable = False
+            if metadata.get("trimmable") and metadata["trimmable"] == "True":
+                is_trimmable = True
+
+            if not allow_trim:
+                logger.debug("KV Cache Trimming is not allowd by user")
+                is_trimmable = False
+
             try:
                 #compare by model_name
                 if model_name != metadata["model_name"]:
@@ -127,7 +136,7 @@ class KVCacheManager:
 
                 # If common tokens is shorter than cached_tokens, then cache needs to be trimmed.
                 if common_len < len(cached_tokens):
-                    if metadata.get("trimmable") and metadata["trimmable"] == "False":
+                    if not is_trimmable:
                         continue
 
                 # update the best_match in case if it is the longest matched cache with prompt_tokens.
@@ -226,7 +235,7 @@ class KVCacheManager:
         return make_prompt_cache(model), dummy_stats
 
 
-    def load_kv_cache(self, model_name: str, prompt_tokens: List):
+    def load_kv_cache(self, model_name: str, prompt_tokens: List, allow_trim:bool = True):
         """
         Find the best matching KV cache by comparing token sequences
 
@@ -252,7 +261,7 @@ class KVCacheManager:
                     logger.debug(f"tokens = {tk}")
 
         # find best maatch (longest match) kv cache file for prompt_tokens
-        best_match = self._find_best_match_cache(model_name, all_metadata, prompt_tokens)
+        best_match = self._find_best_match_cache(model_name, all_metadata, prompt_tokens, allow_trim)
 
         # Process the best match
         if best_match["file_path"] is not None:
@@ -272,8 +281,8 @@ class KVCacheManager:
                                 }
 
                 logger.debug(f"{kv_load_stats=}")
-                return (cache, best_match["common_len"], kv_load_stats)
+                return (cache, metadata, best_match["common_len"], kv_load_stats)
 
         # No suitable cache found
-        return None, 0, {}
+        return None, None, 0, {}
 
