@@ -74,6 +74,14 @@ class GenerationService:
         model_name = self.model_name
         tokenizer = self.tokenizer
 
+        # Initialize variables with safe defaults
+        original_prompt_token = []
+        prompt = ""
+        prompt_eval_time = None
+        kv_cache = None
+        kv_cache_metadata = {}
+        all_generated_tokens = []
+
         # パラメータの統合
         gen_params = self._build_merged_params()
         logger.debug(f"mereged params: {gen_params=}")
@@ -87,10 +95,6 @@ class GenerationService:
         request_id = str(uuid.uuid4())
         created_time = int(time.time())
         all_generated_tokens = []
-
-        prompt = ""
-        kv_cache = None
-        kv_cache_metadata = {}
 
         try:
             # create prompt_tokens
@@ -120,13 +124,18 @@ class GenerationService:
                     suffix_tokens = original_prompt_with_generation_token[len(original_prompt_token):]
 
                 else:
-                    logger.debug(f"Debug: _generate_mlx_exp: MODE2")
-                    # original_prompt_with_generation_token が original_prompt_token より大きくない場合、
-                    # add_generation_token によって prompt が拡張されていないため、固定的に最後の1トークンをsuffix_tokensとする
-                    suffix_tokens = [original_prompt_token[-1]]
-                    original_prompt_token = original_prompt_token[:-1]
-                    logger.debug(f"{original_prompt_token=}")
-                    logger.debug(f"decoded original_prompt_token={tokenizer.decode(original_prompt_token)}")
+                    logger.debug("Debug: _generate_mlx_exp: MODE2 (template did not add markers, using fallback)")
+
+                    if len(original_prompt_token) < 2:
+                        error_msg = "MODE2 fallback requires at least 2 prompt tokens, got {len(original_prompt_token)}".format(len=len(original_prompt_token))
+                        logger.error(error_msg)
+                        yield TaskResponse.create(400, {"error": error_msg}).to_dict()
+                        return
+                    else:
+                        suffix_tokens = [original_prompt_token[-1]]
+                        original_prompt_token = original_prompt_token[:-1]
+                        logger.debug(f"{original_prompt_token=}")
+                        logger.debug(f"decoded original_prompt_token={tokenizer.decode(original_prompt_token)}")
 
                 # original_prompt_token を元に　kv_cache を探査する
                 # すべてのKV Cacheについて Trim を許容しない
@@ -135,8 +144,8 @@ class GenerationService:
                 if kv_cache:
                     if logger.isEnabledFor(logging.DEBUG):
                         token_ids_from_kv_cache_metadata = json.loads(kvc_metadata["tokens"])
-                        logger.debug(f"matched token confrimation: from kv cache: \"{tokenizer.decode(token_ids_from_kv_cache_metadata[:start_index])}\"")
-                        logger.debug(f"matched token confrimation: from prompt: \"{tokenizer.decode(original_prompt_token[:start_index])}\"")
+                        logger.debug(f"matched token confirmation: from kv cache: \"{tokenizer.decode(token_ids_from_kv_cache_metadata[:start_index])}\"")
+                        logger.debug(f"matched token confirmation: from prompt: \"{tokenizer.decode(original_prompt_token[:start_index])}\"")
                     # kv cacheが見つかった場合、prefillに送信するtokenは、kv cache に含まれていない部分のみ（差分=delta）となる
                     delta_token_ids = original_prompt_token[start_index:]
                 else:
@@ -155,20 +164,6 @@ class GenerationService:
                 # apply_chat_template を利用していないケース（需要が小さいので今は放置）
                 prompt = gen_params.prompt
                 suffix_tokens = tokenizer.encode(prompt)
-            
-
-            logger.debug(f"debug. _generate_mlx_exp: {suffix_tokens=}, {tokenizer.decode(suffix_tokens)}")
-
-            # generate text based on prompt_tokens and kv_cache (if params.use_kv_cache is True)
-            start_time = time.perf_counter()
-            is_first_token = True
-
-            self.debug_info.set(
-                stream_generate = {
-                    "model": self.model_name, 
-                    "prompt": self.tokenizer.decode(original_prompt_token)
-                }
-            )
 
             # KV Cacheの保存
             is_kv_cache_saved = False
@@ -186,6 +181,16 @@ class GenerationService:
                     self.kvcache_manager.save_kv_cache(message_id=request_id, kv_cache=kv_cache, metadata=kv_cache_metadata)
                     is_kv_cache_saved = True
 
+            # generate text based on prompt_tokens and kv_cache (if params.use_kv_cache is True)
+            start_time = time.perf_counter()
+            is_first_token = True
+
+            self.debug_info.set(
+                stream_generate = {
+                    "model": self.model_name, 
+                    "prompt": self.tokenizer.decode(original_prompt_token)
+                }
+            )
 
             for item in stream_generate(
                 model=model,
@@ -215,23 +220,25 @@ class GenerationService:
                     prompt_eval_time = time.perf_counter()
                     is_first_token = False
 
-            # 非stream時の最終結果
-            if not gen_params.stream:
+            # After generation loop completes
+            generate_time = time.perf_counter()
+
+            # Build single final response
+            if gen_params.stream:
+                # For streaming, yield only usage summary at the end
+                response = self._create_usage_response(request_id, created_time, model_name)
+            else:
+                # For non-streaming, include the complete text
                 text = tokenizer.decode(all_generated_tokens)
                 response = self._create_final_response(
                     request_id, created_time, model_name, gen_params.apply_chat_template, text
                 )
-                response["usage"] = self._calculate_usage(prompt, all_generated_tokens, tokenizer, start_time, prompt_eval_time)
-                yield response
 
-
-            # complete_textの有無に関わらず、usageを含む応答を返す
-            generate_time = time.perf_counter()
-            perf_timer = [start_time, prompt_eval_time, generate_time] if 'prompt_eval_time' in locals() else []
-
-            response = self._create_usage_response(request_id, created_time, model_name)
+            # Add usage information
+            perf_timer = [start_time, prompt_eval_time, generate_time] if prompt_eval_time else []
             response["usage"] = self._calculate_usage(prompt, all_generated_tokens, tokenizer, *perf_timer)
 
+            # Add KV cache info if saved
             if is_kv_cache_saved:
                 response["usage"]["kv_cache"] = {
                     "cached_tokens": kv_cache_metadata["token_count"],
@@ -536,7 +543,7 @@ class GenerationService:
         }
 
     def _calculate_usage(self, prompt: str, tokens: List, tokenizer: PreTrainedTokenizer, *perf_timer) -> Dict[str, Any]:
-        prompt_tokens = len(tokenizer.encode(prompt))
+        prompt_tokens = len(tokenizer.encode(prompt)) if prompt else 0
         completion_tokens = len(tokens)
         total_tokens = prompt_tokens + completion_tokens
 
@@ -546,7 +553,7 @@ class GenerationService:
             "total_tokens": total_tokens
         }
 
-        if len(perf_timer) == 3:
+        if len(perf_timer) == 3 and perf_timer[1] is not None:
             usage["prompt_eval_time"] = perf_timer[1] - perf_timer[0]
             usage["generation_time"] = perf_timer[2] - perf_timer[1]
 
